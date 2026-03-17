@@ -1,56 +1,53 @@
-name: Build iOS IPA
+name: Build iOS IPA (No Signing)
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
-  build-ios:
+  build:
     runs-on: macos-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Setup Node
         uses: actions/setup-node@v3
         with:
           node-version: 18
 
-      - name: Install dependencies
+      - name: Install deps
         run: npm install
 
-      - name: Install Expo CLI
+      - name: Install Expo
         run: npm install -g expo-cli
 
-      - name: Prebuild iOS
-        run: npx expo prebuild
+      - name: Prebuild
+        run: npx expo prebuild --platform ios
 
-      - name: Install CocoaPods
+      - name: Install pods
         run: |
           cd ios
           pod install
 
-      - name: Build iOS app
+      - name: Build .app (no signing)
         run: |
           cd ios
-          xcodebuild -workspace *.xcworkspace \
+          xcodebuild \
+            -workspace *.xcworkspace \
             -scheme $(ls *.xcodeproj | sed 's/.xcodeproj//') \
             -sdk iphoneos \
             -configuration Release \
-            archive -archivePath $PWD/build/App.xcarchive
+            CODE_SIGNING_ALLOWED=NO \
+            build
 
-      - name: Export IPA
+      - name: Zip app
         run: |
-          cd ios
-          xcodebuild -exportArchive \
-            -archivePath build/App.xcarchive \
-            -exportOptionsPlist ExportOptions.plist \
-            -exportPath build
+          cd ios/build/Release-iphoneos
+          zip -r app.zip *.app
 
-      - name: Upload IPA
+      - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
           name: ios-app
-          path: ios/build
+          path: ios/build/Release-iphoneos/app.zip
