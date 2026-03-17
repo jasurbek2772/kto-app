@@ -1,0 +1,1 @@
+export const API_URL = 'https://kto-server-production.up.railway.app/api';
