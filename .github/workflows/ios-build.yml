@@ -1,0 +1,56 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Expo CLI
+        run: npm install -g expo-cli
+
+      - name: Prebuild iOS
+        run: npx expo prebuild
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install
+
+      - name: Build iOS app
+        run: |
+          cd ios
+          xcodebuild -workspace *.xcworkspace \
+            -scheme $(ls *.xcodeproj | sed 's/.xcodeproj//') \
+            -sdk iphoneos \
+            -configuration Release \
+            archive -archivePath $PWD/build/App.xcarchive
+
+      - name: Export IPA
+        run: |
+          cd ios
+          xcodebuild -exportArchive \
+            -archivePath build/App.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v3
+        with:
+          name: ios-app
+          path: ios/build
