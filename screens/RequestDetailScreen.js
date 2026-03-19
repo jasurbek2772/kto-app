@@ -11,6 +11,7 @@ export default function RequestDetailScreen({ route, navigation }) {
   const [req, setReq]                     = useState(null);
   const [loading, setLoading]             = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [uploadStatus, setUploadStatus]   = useState('');
 
   useEffect(() => { loadRequest(); }, []);
 
@@ -53,7 +54,6 @@ export default function RequestDetailScreen({ route, navigation }) {
     if (!perm.granted) { alert('Нужен доступ к галерее'); return; }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      // ✅ FIX: используем MediaType вместо устаревшего MediaTypeOptions
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
       quality: 0.7,
@@ -62,23 +62,37 @@ export default function RequestDetailScreen({ route, navigation }) {
     if (result.canceled) return;
 
     setActionLoading(true);
-    const formData = new FormData();
-    result.assets.forEach((asset, i) => {
-      formData.append('photos', {
-        uri:  asset.uri,
-        name: `photo_${i}.jpg`,
-        type: 'image/jpeg',
-      });
-    });
+    setUploadStatus('Загружаем фото...');
 
     try {
-      await fetch(`${API_URL}/requests/${id}/photos`, {
-        method: 'POST',
-        body:   formData,
+      const formData = new FormData();
+      result.assets.forEach((asset, i) => {
+        const ext = asset.uri.split('.').pop() || 'jpg';
+        formData.append('photos', {
+          uri:  asset.uri,
+          name: `photo_${Date.now()}_${i}.${ext}`,
+          type: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+        });
       });
-      await loadRequest();
+
+      const res = await fetch(`${API_URL}/requests/${id}/photos`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'multipart/form-data' },
+        body:    formData,
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setUploadStatus('');
+        await loadRequest();
+      } else {
+        setUploadStatus('');
+        Alert.alert('Ошибка загрузки', data.error || 'Неизвестная ошибка');
+      }
     } catch (e) {
-      alert('Ошибка загрузки фото');
+      setUploadStatus('');
+      Alert.alert('Ошибка', 'Не удалось загрузить фото: ' + e.message);
     } finally {
       setActionLoading(false);
     }
@@ -163,16 +177,35 @@ export default function RequestDetailScreen({ route, navigation }) {
       {req.status !== 'free' && (
         <View style={s.photoSection}>
           <Text style={s.photoLabel}>Фотоотчёт</Text>
+
+          {/* Статус загрузки */}
+          {uploadStatus ? (
+            <View style={s.uploadStatus}>
+              <ActivityIndicator size="small" color="#3b82f6" />
+              <Text style={s.uploadStatusText}>{uploadStatus}</Text>
+            </View>
+          ) : null}
+
           <View style={s.photoRow}>
-            {req.photos && req.photos.map(p => (
-              <Image
-                key={p.id}
-                source={{ uri: `${API_URL.replace('/api', '')}/uploads/${p.filename}` }}
-                style={s.photoThumb}
-              />
-            ))}
+            {req.photos && req.photos.map(p => {
+              // Используем url из Cloudinary если есть, иначе старый путь
+              const photoUrl = p.url || `${API_URL.replace('/api', '')}/uploads/${p.filename}`;
+              return (
+                <Image
+                  key={p.id}
+                  source={{ uri: photoUrl }}
+                  style={s.photoThumb}
+                  onError={() => console.log('Ошибка загрузки фото:', photoUrl)}
+                />
+              );
+            })}
+
             {isMine && req.status === 'taken' && (
-              <TouchableOpacity style={s.photoAdd} onPress={pickAndUploadPhoto}>
+              <TouchableOpacity
+                style={[s.photoAdd, actionLoading && { opacity: 0.5 }]}
+                onPress={pickAndUploadPhoto}
+                disabled={actionLoading}
+              >
                 <Text style={s.photoAddText}>+</Text>
               </TouchableOpacity>
             )}
@@ -183,7 +216,6 @@ export default function RequestDetailScreen({ route, navigation }) {
       {/* Кнопки */}
       <View style={s.actions}>
 
-        {/* Свободная — взять */}
         {req.status === 'free' && (
           <TouchableOpacity
             style={[s.btnMain, actionLoading && { opacity: 0.6 }]}
@@ -201,7 +233,6 @@ export default function RequestDetailScreen({ route, navigation }) {
           </TouchableOpacity>
         )}
 
-        {/* Моя и в работе — выполнить или вернуть */}
         {isMine && req.status === 'taken' && (
           <>
             <TouchableOpacity
@@ -239,68 +270,74 @@ export default function RequestDetailScreen({ route, navigation }) {
 }
 
 const s = StyleSheet.create({
-  container:      { flex: 1, backgroundColor: '#f1f5f9' },
-  center:         { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  statusBar:      {
+  container:       { flex: 1, backgroundColor: '#f1f5f9' },
+  center:          { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  statusBar:       {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     padding: 10, paddingHorizontal: 16,
     borderBottomWidth: 0.5, borderBottomColor: '#e2e8f0',
   },
-  statusDot:      { width: 8, height: 8, borderRadius: 4 },
-  statusText:     { fontSize: 12, fontWeight: '500', color: '#374151' },
-  field:          {
+  statusDot:       { width: 8, height: 8, borderRadius: 4 },
+  statusText:      { fontSize: 12, fontWeight: '500', color: '#374151' },
+  field:           {
     backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 10,
     borderBottomWidth: 0.5, borderBottomColor: '#f1f5f9',
   },
-  fieldLabel:     {
+  fieldLabel:      {
     fontSize: 9, color: '#94a3b8',
     textTransform: 'uppercase', letterSpacing: 0.5,
   },
-  fieldVal:       { fontSize: 13, color: '#0f172a', fontWeight: '500', marginTop: 2 },
-  descBox:        {
+  fieldVal:        { fontSize: 13, color: '#0f172a', fontWeight: '500', marginTop: 2 },
+  descBox:         {
     margin: 12, backgroundColor: '#fff', borderRadius: 10, padding: 14,
     borderWidth: 0.5, borderColor: '#e2e8f0',
   },
-  descText:       { fontSize: 13, color: '#374151', lineHeight: 20 },
-  workerBox:      {
+  descText:        { fontSize: 13, color: '#374151', lineHeight: 20 },
+  workerBox:       {
     margin: 12, marginTop: 0, backgroundColor: '#fefce8',
     borderRadius: 10, padding: 12,
     borderWidth: 0.5, borderColor: '#fde68a',
   },
-  workerBoxDone:  { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
-  workerLabel:    {
+  workerBoxDone:   { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
+  workerLabel:     {
     fontSize: 9, color: '#92400e',
     textTransform: 'uppercase', letterSpacing: 0.5,
   },
-  workerName:     { fontSize: 14, fontWeight: '700', color: '#0f172a', marginTop: 3 },
-  workerMeta:     { fontSize: 11, color: '#64748b', marginTop: 2 },
-  photoSection:   { marginHorizontal: 12, marginBottom: 8 },
-  photoLabel:     {
+  workerName:      { fontSize: 14, fontWeight: '700', color: '#0f172a', marginTop: 3 },
+  workerMeta:      { fontSize: 11, color: '#64748b', marginTop: 2 },
+  photoSection:    { marginHorizontal: 12, marginBottom: 8 },
+  photoLabel:      {
     fontSize: 9, color: '#94a3b8',
     textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6,
   },
-  photoRow:       { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  photoThumb:     { width: 70, height: 70, borderRadius: 8 },
-  photoAdd:       {
-    width: 70, height: 70, borderRadius: 8,
+  uploadStatus:    {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginBottom: 8, padding: 8, backgroundColor: '#eff6ff',
+    borderRadius: 8,
+  },
+  uploadStatusText:{ fontSize: 11, color: '#1d4ed8' },
+  photoRow:        { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  photoThumb:      { width: 80, height: 80, borderRadius: 8, backgroundColor: '#e2e8f0' },
+  photoAdd:        {
+    width: 80, height: 80, borderRadius: 8,
     borderWidth: 1.5, borderColor: '#cbd5e1', borderStyle: 'dashed',
     alignItems: 'center', justifyContent: 'center',
   },
-  photoAddText:   { fontSize: 28, color: '#94a3b8' },
-  actions:        { margin: 12, gap: 8 },
-  btnMain:        {
+  photoAddText:    { fontSize: 28, color: '#94a3b8' },
+  actions:         { margin: 12, gap: 8 },
+  btnMain:         {
     backgroundColor: '#0f172a', borderRadius: 12,
     padding: 15, alignItems: 'center',
   },
-  btnMainText:    { color: '#fff', fontSize: 15, fontWeight: '700' },
-  btnSuccess:     {
+  btnMainText:     { color: '#fff', fontSize: 15, fontWeight: '700' },
+  btnSuccess:      {
     backgroundColor: '#15803d', borderRadius: 12,
     padding: 15, alignItems: 'center',
   },
-  btnSuccessText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  btnOutline:     {
+  btnSuccessText:  { color: '#fff', fontSize: 15, fontWeight: '700' },
+  btnOutline:      {
     borderRadius: 12, padding: 13, alignItems: 'center',
     borderWidth: 1, borderColor: '#ef4444',
   },
-  btnOutlineText: { color: '#ef4444', fontSize: 13, fontWeight: '600' },
+  btnOutlineText:  { color: '#ef4444', fontSize: 13, fontWeight: '600' },
 });

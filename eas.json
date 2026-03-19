@@ -11,6 +11,24 @@
     "preview": {
       "distribution": "internal"
     },
+    "preview-ios": {
+      "ios": {
+        "simulator": false,
+        "enterpriseProvisioning": "adhoc",
+        "credentialsSource": "local"
+      },
+      "distribution": "internal"
+    },
+    "sideload": {
+      "ios": {
+        "simulator": false,
+        "credentialsSource": "local"
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "distribution": "internal"
+    },
     "production": {
       "autoIncrement": true
     }

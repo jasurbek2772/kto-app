@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View, Text, FlatList, TouchableOpacity,
-  StyleSheet, TextInput, ActivityIndicator,
-} from 'react-native';
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from '../config';
+import { View, Text, FlatList, TouchableOpacity,
+  StyleSheet, TextInput, ActivityIndicator, Image } from 'react-native';
 
 export default function SelectMasterScreen({ navigation }) {
   const [masters, setMasters] = useState([]);
@@ -80,11 +79,18 @@ export default function SelectMasterScreen({ navigation }) {
             style={[s.row, selected?.id === item.id && s.rowSelected]}
             onPress={() => handleSelect(item)}
           >
-            <View style={s.avatar}>
-              <Text style={s.avatarText}>
-                {item.full_name.split(' ').slice(0, 2).map(w => w[0]).join('')}
-              </Text>
-            </View>
+            {item.photo_url ? (
+  <Image
+    source={{ uri: item.photo_url }}
+    style={s.avatarImg}
+  />
+) : (
+  <View style={s.avatar}>
+    <Text style={s.avatarText}>
+      {item.full_name.split(' ').slice(0,2).map(w => w[0]).join('')}
+    </Text>
+  </View>
+)}
             <Text style={s.name}>{item.full_name}</Text>
             {selected?.id === item.id && (
               <Text style={s.check}>✓</Text>
@@ -106,6 +112,7 @@ export default function SelectMasterScreen({ navigation }) {
 
 const s = StyleSheet.create({
   container:   { flex: 1, backgroundColor: '#0f172a' },
+  avatarImg: { width: 36, height: 36, borderRadius: 18, marginRight: 12 },
   center:      { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0f172a' },
   loadingText: { color: '#94a3b8', marginTop: 12, fontSize: 14 },
   title:       { color: '#f1f5f9', fontSize: 20, fontWeight: '700', padding: 20, paddingBottom: 4 },
