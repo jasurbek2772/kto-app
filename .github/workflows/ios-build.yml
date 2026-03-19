@@ -1,69 +1,47 @@
-name: Build iOS IPA (No Signing)
-
+name: Build iOS (Expo)
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch: # Запуск вручную кнопкой в GitHub
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Убирает предупреждение о Node.js 20
 
 jobs:
   build:
     runs-on: macos-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - name: 1. Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: 2. Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
+          cache: 'npm'
 
-      - name: Install deps
+      - name: 3. Install dependencies
         run: npm install
 
-      - name: Install Expo
-        run: npm install -g expo-cli
-
-      - name: Prebuild
+      - name: 4. Prebuild Expo (Генерация папки ios)
+        # Эта команда создаст папку ios, которой у вас не было
         run: npx expo prebuild --platform ios
 
-      - name: Install pods
-        run: |
-          cd ios
-          pod install
+      - name: 5. Install CocoaPods
+        working-directory: ios
+        run: pod install
 
-      - name: Build iOS (no signing, safe mode)
+      - name: 6. Build App (.app для симулятора)
+        # Собираем для симулятора, так как для реального устройства (.ipa) 
+        # нужны платные сертификаты Apple
         run: |
-          cd ios
-          SCHEME=$(xcodebuild -list | grep -A 1 "Schemes:" | tail -n 1 | xargs)
-          echo "Detected scheme: $SCHEME"
           xcodebuild \
-            -workspace *.xcworkspace \
-            -scheme "$SCHEME" \
-            -sdk iphoneos \
-            -configuration Debug \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            build
-
-      - name: Find and zip .app
-        run: |
-          cd ios
-
-          echo "Searching for .app..."
-          APP_PATH=$(find . -name "*.app" | head -n 1)
-
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ .app not found!"
-            exit 1
-          fi
-
-          echo "✅ Found app at: $APP_PATH"
-
-           cd "$(dirname "$APP_PATH")"
-           zip -r app.zip *.app
-
-      - name: Upload artifact
+            -workspace ios/*.xcworkspace \
+            -scheme $(ls ios | grep .xcodeproj | cut -d. -f1) \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -derivedDataPath build
+            
+      - name: 7. Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-app
-          path: ios/**/*.zip
+          name: ios-simulator-build
+          path: build/Build/Products/Release-iphonesimulator/*.app
