@@ -83,9 +83,13 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          # Очистка перед сборкой, чтобы избежать конфликтов в DerivedData
+          rm -rf ~/Library/Developer/Xcode/DerivedData/SNEG-*
+          
           xcodebuild \
             -workspace ios/SNEG.xcworkspace \
             -scheme "SNEG" \
+            -destination 'generic/platform=iOS' \
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/App.xcarchive \
