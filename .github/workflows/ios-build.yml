@@ -40,7 +40,24 @@ jobs:
 
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
-
+      - name: Debug Signing
+        if: always()
+        shell: bash
+        run: |
+          echo "=== Keychains ==="
+          security list-keychains
+          
+          echo "=== Identities in build.keychain ==="
+          security find-identity -v build.keychain || echo "FAILED: can't read keychain"
+          
+          echo "=== Identities for codesigning ==="
+          security find-identity -v -p codesigning || echo "FAILED: no codesigning identities"
+          
+          echo "=== Provisioning profiles ==="
+          ls ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "FAILED: no profiles"
+          
+          echo "=== Profile decoded ==="
+          security cms -D -i profile.mobileprovision 2>&1 | head -40 || echo "FAILED: can't decode profile"
       - name: Extract Signing Info
         id: signing
         # Явно bash — heredoc <<< не работает в sh
