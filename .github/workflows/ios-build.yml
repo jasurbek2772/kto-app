@@ -40,8 +40,10 @@ jobs:
 
       - name: Create Export Options
         run: |
-          # Этот файл критически важен для сборки .ipa
-          # Мы создаем его "на лету"
+          # Создаем папку ios, если её еще нет после prebuild
+          mkdir -p ios
+          
+          # Генерируем файл настроек экспорта
           cat <<EOF > ios/exportOptions.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -51,9 +53,11 @@ jobs:
               <string>ad-hoc</string>
               <key>signingStyle</key>
               <string>manual</string>
+              <key>teamID</key>
+              <string>$(grep -aA1 "ApplicationIdentifierPrefix" profile.mobileprovision | grep -o "[A-Z0-9]\{10\}")</string>
               <key>provisioningProfiles</key>
               <dict>
-                  <key>com.your.bundle.id</key>
+                  <key>com.jabdu.ktoapp</key>
                   <string>$(grep -aA1 "UUID" profile.mobileprovision | grep -o "[-A-Z0-9]\{36\}")</string>
               </dict>
           </dict>
