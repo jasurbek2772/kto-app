@@ -51,14 +51,10 @@ jobs:
         run: |
           echo "=== Keychains ==="
           security list-keychains
-          echo "=== Identities in build.keychain ==="
-          security find-identity -v build.keychain || echo "FAILED: can't read keychain"
           echo "=== Identities for codesigning ==="
           security find-identity -v -p codesigning || echo "FAILED: no codesigning identities"
           echo "=== Provisioning profiles ==="
           ls ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "FAILED: no profiles"
-          echo "=== Profile decoded ==="
-          security cms -D -i profile.mobileprovision 2>&1 | head -40 || echo "FAILED: can't decode profile"
 
       - name: Extract Signing Info
         id: signing
@@ -96,7 +92,6 @@ jobs:
             </dict>
           </dict></plist>
           EOF
-          echo "=== exportOptions.plist ==="
           cat /tmp/exportOptions.plist
 
       - name: Prebuild
@@ -107,24 +102,25 @@ jobs:
           python3 - << 'EOF'
           with open('ios/Podfile', 'r') as f:
               content = f.read()
-          
+
           patch = """  installer.pods_project.targets.each do |target|
               target.build_configurations.each do |config|
                 config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
                 config.build_settings['SWIFT_VERSION'] = '5'
               end
             end\n"""
-          
+
           content = content.replace(
               'post_install do |installer|\n',
               'post_install do |installer|\n' + patch
           )
-          
+
           with open('ios/Podfile', 'w') as f:
               f.write(content)
-          
+
           print("✅ Podfile patched")
           EOF
+
       - name: Pod Install
         run: cd ios && pod install && cd ..
 
