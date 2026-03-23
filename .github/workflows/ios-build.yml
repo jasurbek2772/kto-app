@@ -20,7 +20,6 @@ jobs:
       - name: Install Dependencies
         run: |
           npm install
-          npx expo install --fix
 
       - name: Prepare Certificates
         shell: bash
@@ -109,7 +108,6 @@ jobs:
               "  installer.pods_project.targets.each do |target|\n"
               "    target.build_configurations.each do |config|\n"
               "      config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'\n"
-              "      config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -strict-concurrency=minimal'\n"
               "    end\n"
               "  end\n"
           )
@@ -131,6 +129,7 @@ jobs:
           print("✅ Podfile patched")
           EOF
 
+ 
       - name: Pod Install
         run: cd ios && pod install && cd ..
 
@@ -149,10 +148,10 @@ jobs:
             "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
             SWIFT_STRICT_CONCURRENCY=minimal \
-            "OTHER_SWIFT_FLAGS=$(inherited) -strict-concurrency=minimal" \
             archive 2>&1 | tee build_archive.log
           grep " error:" build_archive.log | grep -v "^//" | head -20
           grep -E "^(error:|warning: .*(signing|provision|certificate))" build_archive.log || true
+
 
       - name: Export IPA
         shell: bash
