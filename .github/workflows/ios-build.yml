@@ -162,6 +162,9 @@ jobs:
             -exportPath build/ipa \
             -exportOptionsPlist /tmp/exportOptions.plist \
             2>&1 | tee build_export.log
+          
+          echo "=== Last 50 lines ==="
+          tail -50 build_export.log
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
