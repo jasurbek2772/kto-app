@@ -105,16 +105,11 @@ jobs:
           with open('ios/Podfile', 'r') as f:
               content = f.read()
 
-          # Печатаем контекст вокруг post_install для отладки
-          for i, line in enumerate(content.splitlines()):
-              if 'post_install' in line:
-                  print(f"Line {i}: {repr(line)}")
-
           patch = (
               "  installer.pods_project.targets.each do |target|\n"
               "    target.build_configurations.each do |config|\n"
               "      config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'\n"
-              "      config.build_settings['SWIFT_VERSION'] = '5'\n"
+              "      config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -strict-concurrency=minimal'\n"
               "    end\n"
               "  end\n"
           )
@@ -127,13 +122,13 @@ jobs:
           )
 
           if new_content == content:
-              print("❌ Pattern not found! Podfile post_install block not patched.")
+              print("❌ Pattern not found!")
               exit(1)
 
           with open('ios/Podfile', 'w') as f:
               f.write(new_content)
 
-          print("✅ Podfile patched successfully")
+          print("✅ Podfile patched")
           EOF
 
       - name: Pod Install
@@ -154,7 +149,7 @@ jobs:
             "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
             SWIFT_STRICT_CONCURRENCY=minimal \
-            SWIFT_VERSION=5 \
+            "OTHER_SWIFT_FLAGS=$(inherited) -strict-concurrency=minimal" \
             archive 2>&1 | tee build_archive.log
           grep " error:" build_archive.log | grep -v "^//" | head -20
           grep -E "^(error:|warning: .*(signing|provision|certificate))" build_archive.log || true
