@@ -18,7 +18,9 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
-        run: npm install
+        run: |
+          npm install
+          npx expo install expo-build-properties
 
       - name: Prepare Certificates
         shell: bash
