@@ -141,10 +141,10 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -exportArchive \
-            -archivePath /tmp/App.xcarchive \
-            -exportPath /tmp/ipa \
+            -archivePath build/App.xcarchive \
+            -exportPath build/ipa \
             -exportOptionsPlist /tmp/exportOptions.plist \
-            2>&1 | tee /tmp/export.log
+            2>&1 | tee build_export.log
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
