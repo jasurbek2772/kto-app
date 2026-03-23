@@ -18,7 +18,9 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
-        run: npm install
+        run: |
+          npm install
+          npx expo install --fix
 
       - name: Prepare Certificates
         shell: bash
@@ -105,13 +107,12 @@ jobs:
           npx expo prebuild --platform ios --no-install
           cd ios && pod install && cd ..
       - name: Archive
-        # pipefail: exit code берётся из xcodebuild, а не из tee/grep
         shell: bash
         run: |
           set -o pipefail
           xcodebuild \
-            -workspace ios/ktoapp.xcworkspace \
-            -scheme "ktoapp" \
+            -workspace ios/SNEG.xcworkspace \
+            -scheme "SNEG" \
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/App.xcarchive \
@@ -120,7 +121,6 @@ jobs:
             "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
             archive 2>&1 | tee build_archive.log
-            echo "=== ACTUAL ERRORS ==="
           grep " error:" build_archive.log | grep -v "^//" | head -20
           
           # Показываем только ошибки если что-то пошло не так
