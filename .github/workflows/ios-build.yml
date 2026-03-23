@@ -112,9 +112,13 @@ jobs:
           cat /tmp/exportOptions.plist
 
       - name: Prebuild & Pod Install
+        shell: bash
         run: |
           npx expo prebuild --platform ios --no-install
-          cd ios && pod install && cd ..
+          cd ios
+          # Отключаем New Architecture — основная причина ошибок expo-modules-core на CI
+          RCT_NEW_ARCH_ENABLED=0 pod install
+          cd ..
 
       - name: Archive
         shell: bash
@@ -141,6 +145,7 @@ jobs:
             "CODE_SIGN_IDENTITY=${{ steps.signing.outputs.IDENTITY }}" \
             "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
+            RCT_NEW_ARCH_ENABLED=0 \
             archive 2>&1 | tee build_archive.log
 
       - name: Export IPA
