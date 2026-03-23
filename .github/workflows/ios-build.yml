@@ -1,9 +1,8 @@
-name: iOS Build 20262
+name: iOS Build 2026
 on:
   workflow_dispatch:
 
 env:
-  # Убираем предупреждение, включая поддержку Node 24
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -16,34 +15,60 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22 # Стабильная версия для 2026 года
+          node-version: 22
 
       - name: Install Dependencies
         run: npm install
 
       - name: Prepare Certificates
         run: |
-          # Декодируем твои секреты обратно в файлы
           echo "${{ secrets.P12_BASE64 }}" | base64 --decode > cert.p12
           echo "${{ secrets.MOBILEPROVISION_BASE64 }}" | base64 --decode > profile.mobileprovision
-          
-          # Создаем связку ключей на удаленном маке
-          security create-keychain -p "" build.keychain
-          security import cert.p12 -k build.keychain -P "${{ secrets.P12_PASSWORD }}" -A
-          security list-keychains -d user -s build.keychain
+
+          security create-keychain -p "build123" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p "build123" build.keychain
+
+          security import cert.p12 -k build.keychain \
+            -P "${{ secrets.P12_PASSWORD }}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/xcodebuild
+
+          # ← ГЛАВНЫЙ ФИЧ: без этой строки exit code 65
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "build123" build.keychain
+
+          security list-keychains -d user -s build.keychain login.keychain
           security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          
-          # Устанавливаем профиль в систему
+
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
+      - name: Extract Signing Info
+        id: signing
+        run: |
+          # Надёжное извлечение UUID и TeamID через security/PlistBuddy
+          UUID=$(/usr/libexec/PlistBuddy \
+            -c "Print :UUID" \
+            /dev/stdin <<< "$(security cms -D -i profile.mobileprovision)")
+          echo "UUID=$UUID" >> $GITHUB_OUTPUT
+
+          TEAM_ID=$(/usr/libexec/PlistBuddy \
+            -c "Print :TeamIdentifier:0" \
+            /dev/stdin <<< "$(security cms -D -i profile.mobileprovision)")
+          echo "TEAM_ID=$TEAM_ID" >> $GITHUB_OUTPUT
+
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain \
+            | grep "iPhone" | head -1 \
+            | sed 's/.*"\(.*\)"/\1/')
+          echo "IDENTITY=$IDENTITY" >> $GITHUB_OUTPUT
+
+          echo "UUID: $UUID | TeamID: $TEAM_ID | Identity: $IDENTITY"
+
       - name: Create Export Options
         run: |
-          # Создаем папку ios, если её еще нет после prebuild
           mkdir -p ios
-          
-          # Генерируем файл настроек экспорта
           cat <<EOF > ios/exportOptions.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -54,11 +79,11 @@ jobs:
               <key>signingStyle</key>
               <string>manual</string>
               <key>teamID</key>
-              <string>$(grep -aA1 "ApplicationIdentifierPrefix" profile.mobileprovision | grep -o "[A-Z0-9]\{10\}")</string>
+              <string>${{ steps.signing.outputs.TEAM_ID }}</string>
               <key>provisioningProfiles</key>
               <dict>
                   <key>com.jabdu.ktoapp</key>
-                  <string>$(grep -aA1 "UUID" profile.mobileprovision | grep -o "[-A-Z0-9]\{36\}")</string>
+                  <string>${{ steps.signing.outputs.UUID }}</string>
               </dict>
           </dict>
           </plist>
@@ -66,26 +91,26 @@ jobs:
 
       - name: Build IPA
         run: |
-          # 1. Генерируем нативную папку ios (если её нет в гит)
           npx expo prebuild --platform ios --no-install
-          
-          # 2. Устанавливаем поды (CocoaPods)
+
           cd ios && pod install && cd ..
 
-          # 3. Собираем архив (.xcarchive)
-          # Мы жестко прописываем схему 'ktoapp', так как она стандартная для Expo
           xcodebuild -workspace ios/ktoapp.xcworkspace \
             -scheme "ktoapp" \
             -archivePath build/App.xcarchive \
-            archive -sdk iphoneos -configuration Release \
-            -allowProvisioningUpdates
-          
-          # 4. Экспортируем в .ipa
+            -sdk iphoneos \
+            -configuration Release \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="${{ steps.signing.outputs.IDENTITY }}" \
+            PROVISIONING_PROFILE="${{ steps.signing.outputs.UUID }}" \
+            DEVELOPMENT_TEAM="${{ steps.signing.outputs.TEAM_ID }}" \
+            archive 2>&1 | tee build.log | \
+            grep -E "error:|warning:|BUILD|Signing"
+
           xcodebuild -exportArchive \
             -archivePath build/App.xcarchive \
             -exportPath build/ipa \
-            -exportOptionsPlist ios/exportOptions.plist \
-            -allowProvisioningUpdates
+            -exportOptionsPlist ios/exportOptions.plist
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
