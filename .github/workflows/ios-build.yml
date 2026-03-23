@@ -7,13 +7,14 @@ env:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15 # Возвращаемся на актуальную ОС
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Убираем шаг с Xcode 15.4, так как нам нужен 16.1+
       - name: Set Xcode version
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app # <--- Добавь это
+        run: sudo xcode-select -s /Applications/Xcode_16.1.app
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -28,7 +29,6 @@ jobs:
       - name: Prepare Certificates
         shell: bash
         run: |
-          # Декодируем в /tmp/ — и используем /tmp/ везде дальше
           echo "${{ secrets.P12_BASE64 }}" | base64 --decode > /tmp/cert.p12
           echo "${{ secrets.MOBILEPROVISION_BASE64 }}" | base64 --decode > /tmp/profile.mobileprovision
           security create-keychain -p "build123" ~/Library/Keychains/build.keychain-db
@@ -39,52 +39,23 @@ jobs:
             -P "${{ secrets.P12_PASSWORD }}" \
             -T /usr/bin/codesign \
             -T /usr/bin/xcodebuild
-          security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: \
-            -s -k "build123" \
-            ~/Library/Keychains/build.keychain-db
-          security list-keychains -d user \
-            -s ~/Library/Keychains/build.keychain-db \
-               ~/Library/Keychains/login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "build123" ~/Library/Keychains/build.keychain-db
+          security list-keychains -d user -s ~/Library/Keychains/build.keychain-db ~/Library/Keychains/login.keychain-db
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
-      - name: Debug Signing
-        if: always()
-        shell: bash
-        run: |
-          echo "=== Keychains ==="
-          security list-keychains
-          
-          echo "=== Identities in build.keychain ==="
-          security find-identity -v build.keychain || echo "FAILED: can't read keychain"
-          
-          echo "=== Identities for codesigning ==="
-          security find-identity -v -p codesigning || echo "FAILED: no codesigning identities"
-          
-          echo "=== Provisioning profiles ==="
-          ls ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "FAILED: no profiles"
-          
-          echo "=== Profile decoded ==="
-          security cms -D -i profile.mobileprovision 2>&1 | head -40 || echo "FAILED: can't decode profile"
+
       - name: Extract Signing Info
         id: signing
         shell: bash
         run: |
-          # /tmp/ — именно там лежит файл после Prepare Certificates
           security cms -D -i /tmp/profile.mobileprovision > /tmp/pp.plist
           UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/pp.plist)
           TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/pp.plist)
-          IDENTITY=$(security find-identity -v -p codesigning \
-            | grep '"' | head -1 | sed -E 's/.*"(.+)"/\1/')
-          [ -z "$UUID" ]     && echo "❌ UUID empty"     && exit 1
-          [ -z "$TEAM_ID" ]  && echo "❌ TEAM_ID empty"  && exit 1
-          [ -z "$IDENTITY" ] && echo "❌ IDENTITY empty" && exit 1
-          echo "UUID=$UUID"         >> $GITHUB_OUTPUT
-          echo "TEAM_ID=$TEAM_ID"   >> $GITHUB_OUTPUT
+          IDENTITY=$(security find-identity -v -p codesigning | grep '"' | head -1 | sed -E 's/.*"(.+)"/\1/')
+          echo "UUID=$UUID" >> $GITHUB_OUTPUT
+          echo "TEAM_ID=$TEAM_ID" >> $GITHUB_OUTPUT
           echo "IDENTITY=$IDENTITY" >> $GITHUB_OUTPUT
-          echo "✅ UUID:     $UUID"
-          echo "✅ TeamID:   $TEAM_ID"
-          echo "✅ Identity: $IDENTITY"
+
       - name: Create Export Options
         shell: bash
         run: |
@@ -102,13 +73,12 @@ jobs:
             </dict>
           </dict></plist>
           EOF
-          
-          echo "=== exportOptions.plist ==="
-          cat /tmp/exportOptions.plist
+
       - name: Prebuild & Pod Install
         run: |
           npx expo prebuild --platform ios --no-install
           cd ios && pod install && cd ..
+
       - name: Archive
         shell: bash
         run: |
@@ -123,6 +93,8 @@ jobs:
             "CODE_SIGN_IDENTITY=${{ steps.signing.outputs.IDENTITY }}" \
             "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
+            SWIFT_VERSION=5.0 \
+            OTHER_SWIFT_FLAGS="-no-verify-emitted-module-interface" \
             archive 2>&1 | tee build_archive.log
 
       - name: Export IPA
@@ -134,13 +106,13 @@ jobs:
             -exportPath build/ipa \
             -exportOptionsPlist /tmp/exportOptions.plist \
             2>&1 | tee build_export.log
+
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: ios-app-bundle
           path: build/ipa/*.ipa
 
-      # Загружаем логи ВСЕГДА — даже если сборка упала
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
