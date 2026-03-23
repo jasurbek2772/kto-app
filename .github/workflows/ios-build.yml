@@ -156,15 +156,16 @@ jobs:
       - name: Export IPA
         shell: bash
         run: |
-          set -o pipefail
           xcodebuild -exportArchive \
             -archivePath build/App.xcarchive \
             -exportPath build/ipa \
             -exportOptionsPlist /tmp/exportOptions.plist \
-            2>&1 | tee build_export.log
+            2>&1 | grep -E "(error:|EXPORT|FAILED|SUCCEEDED|\.ipa)" | tee build_export.log
           
-          echo "=== Last 50 lines ==="
-          tail -50 build_export.log
+          echo "=== IPA files ==="
+          ls -la build/ipa/ 2>/dev/null || echo "No IPA directory"
+          
+          ls build/ipa/*.ipa 2>/dev/null || exit 1
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
