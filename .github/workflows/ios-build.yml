@@ -148,10 +148,7 @@ jobs:
             "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
             SWIFT_STRICT_CONCURRENCY=minimal \
-            archive 2>&1 | tee build_archive.log
-          grep " error:" build_archive.log | grep -v "^//" | head -20
-          grep -E "^(error:|warning: .*(signing|provision|certificate))" build_archive.log || true
-
+            archive 2>&1 | grep -E "^.*(error:|ARCHIVE FAILED|ARCHIVE SUCCEEDED|fatal error|linker command failed).*$" | tee build_archive.log
 
       - name: Export IPA
         shell: bash
@@ -160,12 +157,17 @@ jobs:
             -archivePath build/App.xcarchive \
             -exportPath build/ipa \
             -exportOptionsPlist /tmp/exportOptions.plist \
-            2>&1 | grep -E "(error:|EXPORT|FAILED|SUCCEEDED|\.ipa)" | tee build_export.log
+            2>&1 | tee build_export.log
+          
+          EXIT_CODE=${PIPESTATUS[0]}
+          
+          echo "=== LAST 50 LINES ==="
+          tail -50 build_export.log
           
           echo "=== IPA files ==="
           ls -la build/ipa/ 2>/dev/null || echo "No IPA directory"
           
-          ls build/ipa/*.ipa 2>/dev/null || exit 1
+          exit $EXIT_CODE
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
