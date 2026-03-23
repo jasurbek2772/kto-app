@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "KTO",
+    "name": "ktoapp",
     "slug": "kto-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -14,10 +14,11 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.jabdu.ktoapp",
+      "buildNumber": "1",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
-      },
-      "buildNumber": "1"
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleDisplayName": "SNEG"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -29,6 +30,16 @@
     "web": {
       "favicon": "./assets/icon.png"
     },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "newArchEnabled": false
+          }
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "a81096fb-3989-4008-b070-6ef385855a3a"
@@ -39,23 +50,6 @@
     },
     "updates": {
       "url": "https://u.expo.dev/a81096fb-3989-4008-b070-6ef385855a3a"
-    },
-    "_comment": "Добавьте следующие опции в plugins если используете expo-build-properties:",
-    "plugins": [
-      "expo-build-properties"
-    ]
-  },
-  "_recommendations": {
-    "install_package": "npx expo install expo-build-properties",
-    "add_to_plugins": [
-      [
-        "expo-build-properties",
-        {
-          "ios": {
-            "newArchEnabled": false
-          }
-        }
-      ]
-    ]
+    }
   }
 }
