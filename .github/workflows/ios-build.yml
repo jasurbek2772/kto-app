@@ -7,10 +7,13 @@ env:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-14
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app # <--- Добавь это
 
       - name: Setup Node
         uses: actions/setup-node@v4
