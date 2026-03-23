@@ -18,7 +18,9 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
-        run: npm install
+        run: |
+          npm install
+          npx expo install --fix
 
       - name: Prepare Certificates
         shell: bash
@@ -120,6 +122,8 @@ jobs:
             "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
             archive 2>&1 | tee build_archive.log
+            echo "=== ACTUAL ERRORS ==="
+          grep " error:" build_archive.log | grep -v "^//" | head -20
           
           # Показываем только ошибки если что-то пошло не так
           grep -E "^(error:|warning: .*(signing|provision|certificate))" build_archive.log || true
