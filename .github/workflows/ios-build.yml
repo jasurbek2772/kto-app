@@ -1,47 +1,42 @@
-name: Build iOS (Expo)
+name: iOS Build
 on:
-  workflow_dispatch: # Запуск вручную кнопкой в GitHub
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Убирает предупреждение о Node.js 20
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-latest
     steps:
-      - name: 1. Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 2. Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: 18
 
-      - name: 3. Install dependencies
+      - name: Install Dependencies
         run: npm install
 
-      - name: 4. Prebuild Expo (Генерация папки ios)
-        # Эта команда создаст папку ios, которой у вас не было
-        run: npx expo prebuild --platform ios
-
-      - name: 5. Install CocoaPods
-        working-directory: ios
-        run: pod install
-
-      - name: 6. Build App (.app для симулятора)
-        # Собираем для симулятора, так как для реального устройства (.ipa) 
-        # нужны платные сертификаты Apple
+      - name: Build IPA
         run: |
-          xcodebuild \
-            -workspace ios/*.xcworkspace \
-            -scheme $(ls ios | grep .xcodeproj | cut -d. -f1) \
-            -configuration Release \
-            -sdk iphonesimulator \
-            -derivedDataPath build
-            
-      - name: 7. Upload Artifact
+          # Устанавливаем сертификат в систему macOS на сервере
+          echo "${{ secrets.P12_BASE64 }}" | base64 --decode > cert.p12
+          echo "${{ secrets.MOBILEPROVISION_BASE64 }}" | base64 --decode > profile.mobileprovision
+          
+          security create-keychain -p "" build.keychain
+          security import cert.p12 -k build.keychain -P "${{ secrets.P12_PASSWORD }}" -A
+          security list-keychains -d user -s build.keychain
+          
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+          
+          # Сама сборка (через Expo или xcodebuild)
+          # Если у тебя Expo, используй:
+          npx expo export:embed --platform ios --dev false
+          # Если чистый React Native, напиши мне, я подправлю команду!
+
+      - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
-          name: ios-simulator-build
-          path: build/Build/Products/Release-iphonesimulator/*.app
+          name: my-app-ipa
+          path: build/*.ipa
