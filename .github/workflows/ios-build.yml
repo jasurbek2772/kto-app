@@ -114,8 +114,17 @@ jobs:
           cat /tmp/exportOptions.plist
 
       - name: Prebuild & Pod Install
+        shell: bash
         run: |
-          npx expo prebuild --platform ios --no-install
+          set -e
+          
+          echo "=== Running expo prebuild ==="
+          npx expo prebuild --platform ios --no-install --clean 2>&1
+          
+          echo "=== Checking ios/ folder ==="
+          ls -la ios/ || (echo "❌ ios/ folder not created!" && exit 1)
+          
+          echo "=== Pod install ==="
           cd ios && pod install && cd ..
 
       - name: Archive
