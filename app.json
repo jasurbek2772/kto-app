@@ -16,7 +16,8 @@
       "bundleIdentifier": "com.jabdu.ktoapp",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
@@ -38,6 +39,23 @@
     },
     "updates": {
       "url": "https://u.expo.dev/a81096fb-3989-4008-b070-6ef385855a3a"
-    }
+    },
+    "_comment": "Добавьте следующие опции в plugins если используете expo-build-properties:",
+    "plugins": [
+      "expo-build-properties"
+    ]
+  },
+  "_recommendations": {
+    "install_package": "npx expo install expo-build-properties",
+    "add_to_plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "newArchEnabled": false
+          }
+        }
+      ]
+    ]
   }
 }

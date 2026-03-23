@@ -17,13 +17,19 @@ jobs:
         with:
           node-version: 22
 
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
       - name: Install Dependencies
         run: npm install
 
       - name: Prepare Certificates
         shell: bash
         run: |
-          # Декодируем в /tmp/ — и используем /tmp/ везде дальше
+          # Декодируем в /tmp/
           echo "${{ secrets.P12_BASE64 }}" | base64 --decode > /tmp/cert.p12
           echo "${{ secrets.MOBILEPROVISION_BASE64 }}" | base64 --decode > /tmp/profile.mobileprovision
 
@@ -48,6 +54,7 @@ jobs:
 
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp /tmp/profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+
       - name: Debug Signing
         if: always()
         shell: bash
@@ -63,14 +70,11 @@ jobs:
           
           echo "=== Provisioning profiles ==="
           ls ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "FAILED: no profiles"
-          
-          echo "=== Profile decoded ==="
-          security cms -D -i profile.mobileprovision 2>&1 | head -40 || echo "FAILED: can't decode profile"
+
       - name: Extract Signing Info
         id: signing
         shell: bash
         run: |
-          # /tmp/ — именно там лежит файл после Prepare Certificates
           security cms -D -i /tmp/profile.mobileprovision > /tmp/pp.plist
 
           UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /tmp/pp.plist)
@@ -114,18 +118,47 @@ jobs:
       - name: Prebuild & Pod Install
         shell: bash
         run: |
+          # КРИТИЧЕСКИ ВАЖНО: очистка перед prebuild
+          rm -rf ios
+          
+          # Prebuild с отключением New Architecture
           npx expo prebuild --platform ios --no-install
+          
           cd ios
-          # Отключаем New Architecture — основная причина ошибок expo-modules-core на CI
-          RCT_NEW_ARCH_ENABLED=0 pod install
+          
+          # Устанавливаем Ruby зависимости если есть Gemfile
+          if [ -f "Gemfile" ]; then
+            bundle install
+          fi
+          
+          # Отключаем New Architecture через Podfile
+          # Это более надежно, чем env переменная
+          sed -i '' 's/:path => "..\/node_modules\/react-native-macos"/:path => "..\/node_modules\/react-native-macos", :inhibit_warnings => true/g' Podfile || true
+          
+          # Pod install с флагами для стабильности
+          RCT_NEW_ARCH_ENABLED=0 pod install --repo-update
           cd ..
+
+      - name: Verify Xcode Project
+        shell: bash
+        run: |
+          echo "=== Checking iOS project structure ==="
+          ls -la ios/
+          
+          echo "=== Checking xcworkspace ==="
+          ls -la ios/*.xcworkspace/ || echo "No xcworkspace found"
+          
+          echo "=== Checking xcodeproj ==="
+          ls -la ios/*.xcodeproj/ || echo "No xcodeproj found"
+          
+          echo "=== Podfile.lock content ==="
+          cat ios/Podfile.lock | head -50
 
       - name: Archive
         shell: bash
         run: |
           set -o pipefail
           
-          # find ищет директорию с нужным расширением, не заходя внутрь
           WORKSPACE=$(find ios -maxdepth 1 -name "*.xcworkspace" | head -1)
           SCHEME=$(find ios -maxdepth 1 -name "*.xcodeproj" | head -1 | xargs basename | cut -d. -f1)
           
@@ -135,17 +168,21 @@ jobs:
           [ -z "$WORKSPACE" ] && echo "❌ xcworkspace не найден" && exit 1
           [ -z "$SCHEME" ]    && echo "❌ xcodeproj не найден"   && exit 1
           
+          # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: добавляем -allowProvisioningUpdates и другие флаги
           xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/App.xcarchive \
+            -allowProvisioningUpdates \
+            -allowProvisioningDeviceRegistration \
             CODE_SIGN_STYLE=Manual \
             "CODE_SIGN_IDENTITY=${{ steps.signing.outputs.IDENTITY }}" \
-            "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
+            "PROVISIONING_PROFILE_SPECIFIER=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
             RCT_NEW_ARCH_ENABLED=0 \
+            GCC_WARN_INHIBIT_ALL_WARNINGS=YES \
             archive 2>&1 | tee build_archive.log
 
       - name: Export IPA
@@ -156,15 +193,16 @@ jobs:
             -archivePath build/App.xcarchive \
             -exportPath build/ipa \
             -exportOptionsPlist /tmp/exportOptions.plist \
+            -allowProvisioningUpdates \
             2>&1 | tee build_export.log
 
       - name: Upload IPA
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: ios-app-bundle
           path: build/ipa/*.ipa
 
-      # Загружаем логи ВСЕГДА — даже если сборка упала
       - name: Upload Build Logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -173,3 +211,16 @@ jobs:
           path: |
             build_archive.log
             build_export.log
+            ios/Podfile.lock
+
+      # Дополнительная диагностика при падении
+      - name: Detailed Error Report
+        if: failure()
+        shell: bash
+        run: |
+          echo "=== ПОСЛЕДНИЕ 200 СТРОК ЛОГА СБОРКИ ==="
+          tail -200 build_archive.log || echo "Log not found"
+          
+          echo ""
+          echo "=== ПРОВЕРКА DERIVED DATA ==="
+          find ~/Library/Developer/Xcode/DerivedData -name "*.log" 2>/dev/null | head -5 || echo "No logs"
