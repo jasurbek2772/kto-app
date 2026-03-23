@@ -62,22 +62,26 @@ jobs:
 
       - name: Build IPA
         run: |
-          npx expo prebuild --platform ios
+          # 1. Генерируем нативную папку ios (если её нет в гит)
+          npx expo prebuild --platform ios --no-install
           
-          # Находим название схемы проекта
-          SCHEME=$(ls ios/*.xcodeproj | xargs -n1 basename | sed 's/.xcodeproj//')
-          
-          # Архивируем проект
-          xcodebuild -workspace ios/*.xcworkspace \
-            -scheme "$SCHEME" \
+          # 2. Устанавливаем поды (CocoaPods)
+          cd ios && pod install && cd ..
+
+          # 3. Собираем архив (.xcarchive)
+          # Мы жестко прописываем схему 'ktoapp', так как она стандартная для Expo
+          xcodebuild -workspace ios/ktoapp.xcworkspace \
+            -scheme "ktoapp" \
             -archivePath build/App.xcarchive \
-            archive -sdk iphoneos -configuration Release
+            archive -sdk iphoneos -configuration Release \
+            -allowProvisioningUpdates
           
-          # Экспортируем архив в файл .ipa
+          # 4. Экспортируем в .ipa
           xcodebuild -exportArchive \
             -archivePath build/App.xcarchive \
             -exportPath build/ipa \
-            -exportOptionsPlist ios/exportOptions.plist
+            -exportOptionsPlist ios/exportOptions.plist \
+            -allowProvisioningUpdates
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
