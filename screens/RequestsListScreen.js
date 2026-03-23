@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
-  StyleSheet, RefreshControl, Alert,
+  StyleSheet, RefreshControl, Alert, TextInput,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
@@ -15,13 +15,24 @@ const FILTERS = [
   { key: 'done', label: 'Выполненные' },
 ];
 
+const SORTS = [
+  { key: 'date_desc',     label: 'Новые' },
+  { key: 'date_asc',      label: 'Старые' },
+  { key: 'deadline_asc',  label: 'Срок ↑' },
+  { key: 'deadline_desc', label: 'Срок ↓' },
+];
+
 export default function RequestsListScreen({ navigation, route }) {
   const master = route.params?.master;
   const [requests, setRequests]     = useState([]);
   const [filter, setFilter]         = useState('all');
+  const [sort, setSort]             = useState('date_desc');
+  const [search, setSearch]         = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [showSort, setShowSort]     = useState(false);
+  const autoRefreshRef              = useRef(null);
 
-  // ✅ FIX: setOptions перенесён в useEffect — не вызывается во время рендера
+  // Заголовок
   useEffect(() => {
     navigation.setOptions({
       headerRight: () => (
@@ -30,12 +41,10 @@ export default function RequestsListScreen({ navigation, route }) {
           onPress={() =>
             Alert.alert('Смена мастера', 'Сменить мастера?', [
               { text: 'Отмена' },
-              {
-                text: 'Да', onPress: () => {
-                  AsyncStorage.removeItem('master');
-                  navigation.replace('SelectMaster');
-                }
-              },
+              { text: 'Да', onPress: () => {
+                AsyncStorage.removeItem('master');
+                navigation.replace('SelectMaster');
+              }},
             ])
           }
         >
@@ -47,9 +56,15 @@ export default function RequestsListScreen({ navigation, route }) {
     });
   }, [navigation, master]);
 
-  // Перезагружаем список каждый раз когда возвращаемся на экран
+  // Авто-обновление каждые 30 секунд
   useFocusEffect(
-    useCallback(() => { loadRequests(); }, [])
+    useCallback(() => {
+      loadRequests();
+      autoRefreshRef.current = setInterval(loadRequests, 30000);
+      return () => {
+        if (autoRefreshRef.current) clearInterval(autoRefreshRef.current);
+      };
+    }, [])
   );
 
   const loadRequests = async () => {
@@ -58,7 +73,7 @@ export default function RequestsListScreen({ navigation, route }) {
       const data = await res.json();
       setRequests(data);
     } catch (e) {
-      alert('Ошибка загрузки заявок');
+      // тихо — авто-обновление не должно показывать ошибки
     }
   };
 
@@ -69,52 +84,132 @@ export default function RequestsListScreen({ navigation, route }) {
   };
 
   const getFiltered = () => {
-    if (filter === 'free') return requests.filter(r => r.status === 'free');
-    if (filter === 'mine') return requests.filter(r => r.master_id === master?.id);
-    if (filter === 'done') return requests.filter(r => r.status === 'done');
-    return requests;
+    let data = requests;
+
+    // Фильтр по статусу
+    if (filter === 'free') data = data.filter(r => r.status === 'free');
+    else if (filter === 'mine') data = data.filter(r => r.master_id === master?.id);
+    else if (filter === 'done') data = data.filter(r => r.status === 'done');
+
+    // Поиск
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      data = data.filter(r =>
+        (r.number_1c   || '').toLowerCase().includes(q) ||
+        (r.address     || '').toLowerCase().includes(q) ||
+        (r.category    || '').toLowerCase().includes(q) ||
+        (r.content     || '').toLowerCase().includes(q) ||
+        (r.master_name || '').toLowerCase().includes(q)
+      );
+    }
+
+    // Сортировка
+    data = [...data].sort((a, b) => {
+      if (sort === 'date_desc')     return new Date(b.date_received) - new Date(a.date_received);
+      if (sort === 'date_asc')      return new Date(a.date_received) - new Date(b.date_received);
+      if (sort === 'deadline_asc')  return new Date(a.deadline || '9999') - new Date(b.deadline || '9999');
+      if (sort === 'deadline_desc') return new Date(b.deadline || '0') - new Date(a.deadline || '0');
+      return 0;
+    });
+
+    return data;
   };
+
+  const filtered = getFiltered();
 
   const renderItem = ({ item }) => (
     <RequestCard
       item={item}
-      onPress={() =>
-        navigation.navigate('RequestDetail', {
-          id:     item.id,
-          number: item.number_1c,
-          master,
-        })
-      }
+      onPress={() => navigation.navigate('RequestDetail', {
+        id: item.id, number: item.number_1c, master,
+      })}
     />
   );
 
   return (
     <View style={s.container}>
 
-      {/* Фильтры */}
-      <View style={s.filters}>
-        {FILTERS.map(f => (
-          <TouchableOpacity
-            key={f.key}
-            style={[s.filterBtn, filter === f.key && s.filterActive]}
-            onPress={() => setFilter(f.key)}
-          >
-            <Text style={[s.filterText, filter === f.key && s.filterTextActive]}>
-              {f.label}
-            </Text>
+      {/* Поиск */}
+      <View style={s.searchBox}>
+        <TextInput
+          style={s.searchInput}
+          placeholder="🔍 Поиск по номеру, адресу, категории..."
+          placeholderTextColor="#64748b"
+          value={search}
+          onChangeText={setSearch}
+        />
+        {search.length > 0 && (
+          <TouchableOpacity onPress={() => setSearch('')} style={s.searchClear}>
+            <Text style={{ color: '#64748b', fontSize: 16 }}>✕</Text>
           </TouchableOpacity>
-        ))}
+        )}
       </View>
 
+      {/* Фильтры + Сортировка */}
+      <View style={s.filterBar}>
+        <View style={s.filters}>
+          {FILTERS.map(f => (
+            <TouchableOpacity
+              key={f.key}
+              style={[s.filterBtn, filter === f.key && s.filterActive]}
+              onPress={() => setFilter(f.key)}
+            >
+              <Text style={[s.filterText, filter === f.key && s.filterTextActive]}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity style={s.sortBtn} onPress={() => setShowSort(!showSort)}>
+          <Text style={s.sortBtnText}>⇅ {SORTS.find(s => s.key === sort)?.label}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Dropdown сортировки */}
+      {showSort && (
+        <View style={s.sortDropdown}>
+          {SORTS.map(s => (
+            <TouchableOpacity
+              key={s.key}
+              style={[s.sortItem, sort === s.key && s.sortItemActive]}
+              onPress={() => { setSort(s.key); setShowSort(false); }}
+            >
+              <Text style={[s.sortItemText, sort === s.key && { color: '#f1f5f9' }]}>
+                {s.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {/* Счётчик результатов */}
+      {(search || filter !== 'all') && (
+        <View style={s.resultCount}>
+          <Text style={s.resultCountText}>
+            Найдено: {filtered.length}
+            {search ? ` по запросу "${search}"` : ''}
+          </Text>
+        </View>
+      )}
+
       <FlatList
-        data={getFiltered()}
+        data={filtered}
         keyExtractor={i => i.id.toString()}
         renderItem={renderItem}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         ListEmptyComponent={
-          <Text style={s.empty}>Заявок нет</Text>
+          <View style={s.emptyBox}>
+            <Text style={s.emptyText}>
+              {search ? 'Ничего не найдено' : 'Заявок нет'}
+            </Text>
+            {search && (
+              <TouchableOpacity onPress={() => setSearch('')}>
+                <Text style={s.emptyClear}>Очистить поиск</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         }
         contentContainerStyle={{ paddingBottom: 20 }}
       />
@@ -124,15 +219,43 @@ export default function RequestsListScreen({ navigation, route }) {
 }
 
 const s = StyleSheet.create({
-  container:        { flex: 1, backgroundColor: '#f1f5f9' },
-  filters:          {
-    flexDirection: 'row', padding: 10, gap: 6,
-    backgroundColor: '#fff',
+  container:       { flex: 1, backgroundColor: '#f1f5f9' },
+  searchBox:       {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 6,
     borderBottomWidth: 0.5, borderBottomColor: '#e2e8f0',
   },
-  filterBtn:        { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#f1f5f9' },
-  filterActive:     { backgroundColor: '#0f172a' },
-  filterText:       { fontSize: 12, color: '#64748b' },
-  filterTextActive: { color: '#fff' },
-  empty:            { textAlign: 'center', marginTop: 60, color: '#94a3b8', fontSize: 14 },
+  searchInput:     { flex: 1, fontSize: 13, color: '#0f172a', paddingVertical: 6 },
+  searchClear:     { padding: 4 },
+  filterBar:       {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff', paddingHorizontal: 10, paddingBottom: 8, paddingTop: 4,
+    borderBottomWidth: 0.5, borderBottomColor: '#e2e8f0',
+  },
+  filters:         { flex: 1, flexDirection: 'row', gap: 4 },
+  filterBtn:       { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: '#f1f5f9' },
+  filterActive:    { backgroundColor: '#0f172a' },
+  filterText:      { fontSize: 11, color: '#64748b' },
+  filterTextActive:{ color: '#fff' },
+  sortBtn:         {
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
+    backgroundColor: '#f1f5f9', borderWidth: 0.5, borderColor: '#e2e8f0',
+  },
+  sortBtnText:     { fontSize: 11, color: '#64748b' },
+  sortDropdown:    {
+    backgroundColor: '#fff', borderBottomWidth: 0.5,
+    borderBottomColor: '#e2e8f0', flexDirection: 'row',
+    flexWrap: 'wrap', padding: 8, gap: 6,
+  },
+  sortItem:        {
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: 20, backgroundColor: '#f1f5f9',
+  },
+  sortItemActive:  { backgroundColor: '#0f172a' },
+  sortItemText:    { fontSize: 11, color: '#64748b' },
+  resultCount:     { paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#eff6ff' },
+  resultCountText: { fontSize: 11, color: '#1d4ed8' },
+  emptyBox:        { alignItems: 'center', marginTop: 60 },
+  emptyText:       { color: '#94a3b8', fontSize: 14, marginBottom: 8 },
+  emptyClear:      { color: '#3b82f6', fontSize: 12 },
 });
