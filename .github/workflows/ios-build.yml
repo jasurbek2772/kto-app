@@ -104,13 +104,27 @@ jobs:
 
       - name: Patch Podfile
         run: |
-          sed -i '' '/^post_install do |installer|/a\
-            installer.pods_project.targets.each do |target|\
-              target.build_configurations.each do |config|\
-                config.build_settings["SWIFT_STRICT_CONCURRENCY"] = "minimal"\
-              end\
-            end
-          ' ios/Podfile
+          python3 - << 'EOF'
+          with open('ios/Podfile', 'r') as f:
+              content = f.read()
+          
+          patch = """  installer.pods_project.targets.each do |target|
+              target.build_configurations.each do |config|
+                config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
+                config.build_settings['SWIFT_VERSION'] = '5'
+              end
+            end\n"""
+          
+          content = content.replace(
+              'post_install do |installer|\n',
+              'post_install do |installer|\n' + patch
+          )
+          
+          with open('ios/Podfile', 'w') as f:
+              f.write(content)
+          
+          print("✅ Podfile patched")
+          EOF
       - name: Pod Install
         run: cd ios && pod install && cd ..
 
@@ -129,6 +143,7 @@ jobs:
             "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
             SWIFT_STRICT_CONCURRENCY=minimal \
+            SWIFT_VERSION=5 \
             archive 2>&1 | tee build_archive.log
           grep " error:" build_archive.log | grep -v "^//" | head -20
           grep -E "^(error:|warning: .*(signing|provision|certificate))" build_archive.log || true
