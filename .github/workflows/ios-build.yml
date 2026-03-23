@@ -100,25 +100,40 @@ jobs:
       - name: Patch Podfile
         run: |
           python3 - << 'EOF'
+          import re
+
           with open('ios/Podfile', 'r') as f:
               content = f.read()
 
-          patch = """  installer.pods_project.targets.each do |target|
-              target.build_configurations.each do |config|
-                config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
-                config.build_settings['SWIFT_VERSION'] = '5'
-              end
-            end\n"""
+          # Печатаем контекст вокруг post_install для отладки
+          for i, line in enumerate(content.splitlines()):
+              if 'post_install' in line:
+                  print(f"Line {i}: {repr(line)}")
 
-          content = content.replace(
-              'post_install do |installer|\n',
-              'post_install do |installer|\n' + patch
+          patch = (
+              "  installer.pods_project.targets.each do |target|\n"
+              "    target.build_configurations.each do |config|\n"
+              "      config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'\n"
+              "      config.build_settings['SWIFT_VERSION'] = '5'\n"
+              "    end\n"
+              "  end\n"
           )
 
-          with open('ios/Podfile', 'w') as f:
-              f.write(content)
+          new_content = re.sub(
+              r'(post_install do \|installer\|)',
+              r'\1\n' + patch,
+              content,
+              count=1
+          )
 
-          print("✅ Podfile patched")
+          if new_content == content:
+              print("❌ Pattern not found! Podfile post_install block not patched.")
+              exit(1)
+
+          with open('ios/Podfile', 'w') as f:
+              f.write(new_content)
+
+          print("✅ Podfile patched successfully")
           EOF
 
       - name: Pod Install
