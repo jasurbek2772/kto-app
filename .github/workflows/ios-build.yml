@@ -104,17 +104,13 @@ jobs:
 
       - name: Patch Podfile
         run: |
-          cat >> ios/Podfile << 'EOF'
-
-          post_install do |installer|
-            installer.pods_project.targets.each do |target|
-              target.build_configurations.each do |config|
-                config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
-              end
+          sed -i '' '/^post_install do |installer|/a\
+            installer.pods_project.targets.each do |target|\
+              target.build_configurations.each do |config|\
+                config.build_settings["SWIFT_STRICT_CONCURRENCY"] = "minimal"\
+              end\
             end
-          end
-          EOF
-
+          ' ios/Podfile
       - name: Pod Install
         run: cd ios && pod install && cd ..
 
