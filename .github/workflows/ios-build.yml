@@ -1,42 +1,64 @@
-name: iOS Build
+name: iOS Build 2026
 on:
   workflow_dispatch:
+
+env:
+  # Убираем предупреждение о Node.js 20 и используем стандарт 2026 года
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # v4 уже поддерживает запуск на Node 24
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22 # Используем стабильную 22-ю версию Node.js
 
       - name: Install Dependencies
         run: npm install
 
-      - name: Build IPA
+      - name: Prepare Certificates
         run: |
-          # Устанавливаем сертификат в систему macOS на сервере
+          # Декодируем сертификат и профиль из твоих секретов
           echo "${{ secrets.P12_BASE64 }}" | base64 --decode > cert.p12
           echo "${{ secrets.MOBILEPROVISION_BASE64 }}" | base64 --decode > profile.mobileprovision
           
+          # Создаем временную связку ключей на маке в облаке
           security create-keychain -p "" build.keychain
           security import cert.p12 -k build.keychain -P "${{ secrets.P12_PASSWORD }}" -A
           security list-keychains -d user -s build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
           
+          # Устанавливаем профиль в нужную папку
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
-          
-          # Сама сборка (через Expo или xcodebuild)
-          # Если у тебя Expo, используй:
-          npx expo export:embed --platform ios --dev false
-          # Если чистый React Native, напиши мне, я подправлю команду!
 
-      - name: Upload Result
+      - name: Build IPA
+        run: |
+          # Если ты используешь Expo:
+          npx expo prebuild --platform ios
+          
+          # Команда для сборки самого файла .ipa
+          # Мы используем xcodebuild, чтобы создать архив и экспортировать его
+          xcodebuild -workspace ios/*.xcworkspace \
+            -scheme $(ls ios/*.xcodeproj | xargs -n1 basename | sed 's/.xcodeproj//') \
+            -archivePath build/App.xcarchive \
+            archive -sdk iphoneos -configuration Release
+          
+          # На этом этапе нам может понадобиться файл exportOptions.plist
+          # Если его нет, команда ниже может выдать ошибку — тогда напиши мне!
+          xcodebuild -exportArchive \
+            -archivePath build/App.xcarchive \
+            -exportPath build/ipa \
+            -exportOptionsPlist ios/exportOptions.plist
+
+      - name: Upload to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: my-app-ipa
-          path: build/*.ipa
+          name: ios-release-app
+          path: build/ipa/*.ipa
