@@ -128,13 +128,22 @@ jobs:
           cd ios && pod install && cd ..
 
       - name: Archive
-        # pipefail: exit code берётся из xcodebuild, а не из tee/grep
         shell: bash
         run: |
           set -o pipefail
+
+          WORKSPACE=$(find ios -maxdepth 1 -name "*.xcworkspace" -type d | head -1)
+          SCHEME=$(find ios -maxdepth 1 -name "*.xcodeproj" -type d | head -1 | xargs basename | cut -d. -f1)
+
+          echo "📁 Workspace: [$WORKSPACE]"
+          echo "🎯 Scheme:    [$SCHEME]"
+
+          [ -z "$WORKSPACE" ] && echo "❌ xcworkspace не найден" && exit 1
+          [ -z "$SCHEME" ]    && echo "❌ xcodeproj не найден"   && exit 1
+
           xcodebuild \
-            -workspace ios/ktoapp.xcworkspace \
-            -scheme "ktoapp" \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/App.xcarchive \
@@ -143,9 +152,8 @@ jobs:
             "PROVISIONING_PROFILE=${{ steps.signing.outputs.UUID }}" \
             "DEVELOPMENT_TEAM=${{ steps.signing.outputs.TEAM_ID }}" \
             archive 2>&1 | tee build_archive.log
-          
-          # Показываем только ошибки если что-то пошло не так
-          grep -E "^(error:|warning: .*(signing|provision|certificate))" build_archive.log || true
+
+          grep " error:" build_archive.log | head -20 || true
 
       - name: Export IPA
         shell: bash

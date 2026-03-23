@@ -1,7 +1,8 @@
 {
   "expo": {
-    "name": "SNEG",
+    "name": "ktoapp",
     "slug": "kto-app",
+    "displayName": "SNEG",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -16,8 +17,7 @@
       "bundleIdentifier": "com.jabdu.ktoapp",
       "buildNumber": "1",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false,
-        "CFBundleDisplayName": "SNEG"
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
