@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
 
 env:
-  # Убираем предупреждение о Node.js 20 и используем стандарт 2026 года
+  # Убираем предупреждение, включая поддержку Node 24
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -11,54 +11,76 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4 # v4 уже поддерживает запуск на Node 24
+        uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22 # Используем стабильную 22-ю версию Node.js
+          node-version: 22 # Стабильная версия для 2026 года
 
       - name: Install Dependencies
         run: npm install
 
       - name: Prepare Certificates
         run: |
-          # Декодируем сертификат и профиль из твоих секретов
+          # Декодируем твои секреты обратно в файлы
           echo "${{ secrets.P12_BASE64 }}" | base64 --decode > cert.p12
           echo "${{ secrets.MOBILEPROVISION_BASE64 }}" | base64 --decode > profile.mobileprovision
           
-          # Создаем временную связку ключей на маке в облаке
+          # Создаем связку ключей на удаленном маке
           security create-keychain -p "" build.keychain
           security import cert.p12 -k build.keychain -P "${{ secrets.P12_PASSWORD }}" -A
           security list-keychains -d user -s build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "" build.keychain
           
-          # Устанавливаем профиль в нужную папку
+          # Устанавливаем профиль в систему
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
 
+      - name: Create Export Options
+        run: |
+          # Этот файл критически важен для сборки .ipa
+          # Мы создаем его "на лету"
+          cat <<EOF > ios/exportOptions.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>ad-hoc</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>com.your.bundle.id</key>
+                  <string>$(grep -aA1 "UUID" profile.mobileprovision | grep -o "[-A-Z0-9]\{36\}")</string>
+              </dict>
+          </dict>
+          </plist>
+          EOF
+
       - name: Build IPA
         run: |
-          # Если ты используешь Expo:
           npx expo prebuild --platform ios
           
-          # Команда для сборки самого файла .ipa
-          # Мы используем xcodebuild, чтобы создать архив и экспортировать его
+          # Находим название схемы проекта
+          SCHEME=$(ls ios/*.xcodeproj | xargs -n1 basename | sed 's/.xcodeproj//')
+          
+          # Архивируем проект
           xcodebuild -workspace ios/*.xcworkspace \
-            -scheme $(ls ios/*.xcodeproj | xargs -n1 basename | sed 's/.xcodeproj//') \
+            -scheme "$SCHEME" \
             -archivePath build/App.xcarchive \
             archive -sdk iphoneos -configuration Release
           
-          # На этом этапе нам может понадобиться файл exportOptions.plist
-          # Если его нет, команда ниже может выдать ошибку — тогда напиши мне!
+          # Экспортируем архив в файл .ipa
           xcodebuild -exportArchive \
             -archivePath build/App.xcarchive \
             -exportPath build/ipa \
             -exportOptionsPlist ios/exportOptions.plist
 
-      - name: Upload to Artifacts
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: ios-release-app
+          name: ios-app-bundle
           path: build/ipa/*.ipa
