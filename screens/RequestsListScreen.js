@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
-import { API_URL } from '../config';
+import { supabase } from '../supabase'; // Путь к твоему конфигу Supabase
 import RequestCard from '../components/RequestCard';
 
 const FILTERS = [
@@ -19,7 +19,6 @@ const SORTS = [
   { key: 'date_desc',     label: 'Новые' },
   { key: 'date_asc',      label: 'Старые' },
   { key: 'deadline_asc',  label: 'Срок ↑' },
-  { key: 'deadline_desc', label: 'Срок ↓' },
 ];
 
 export default function RequestsListScreen({ navigation, route }) {
@@ -32,23 +31,23 @@ export default function RequestsListScreen({ navigation, route }) {
   const [showSort, setShowSort]     = useState(false);
   const autoRefreshRef              = useRef(null);
 
-  // Заголовок
+  // Настройка заголовка (смена мастера)
   useEffect(() => {
     navigation.setOptions({
       headerRight: () => (
         <TouchableOpacity
           style={{ marginRight: 16 }}
           onPress={() =>
-            Alert.alert('Смена мастера', 'Сменить мастера?', [
+            Alert.alert('Смена мастера', `Выйти из профиля ${master?.full_name}?`, [
               { text: 'Отмена' },
-              { text: 'Да', onPress: () => {
-                AsyncStorage.removeItem('master');
+              { text: 'Выйти', style: 'destructive', onPress: async () => {
+                await AsyncStorage.removeItem('master');
                 navigation.replace('SelectMaster');
               }},
             ])
           }
         >
-          <Text style={{ color: '#60a5fa', fontSize: 13 }}>
+          <Text style={{ color: '#60a5fa', fontSize: 13, fontWeight: '600' }}>
             {master?.full_name.split(' ')[0]} ✕
           </Text>
         </TouchableOpacity>
@@ -56,7 +55,7 @@ export default function RequestsListScreen({ navigation, route }) {
     });
   }, [navigation, master]);
 
-  // Авто-обновление каждые 30 секунд
+  // Авто-обновление при нахождении на экране
   useFocusEffect(
     useCallback(() => {
       loadRequests();
@@ -64,16 +63,33 @@ export default function RequestsListScreen({ navigation, route }) {
       return () => {
         if (autoRefreshRef.current) clearInterval(autoRefreshRef.current);
       };
-    }, [])
+    }, [filter, sort]) // Перезагружаем при смене фильтра/сортировки
   );
 
   const loadRequests = async () => {
     try {
-      const res  = await fetch(`${API_URL}/requests`);
-      const data = await res.json();
-      setRequests(data);
+      let query = supabase.from('orders').select('*');
+
+      // 1. Применяем фильтры Supabase
+      if (filter === 'free') {
+        query = query.eq('status', 'Новая').is('id_master', null);
+      } else if (filter === 'mine') {
+        query = query.eq('id_master', master.id).neq('status', 'Выполнена');
+      } else if (filter === 'done') {
+        query = query.eq('status', 'Выполнена').eq('id_master', master.id);
+      }
+
+      // 2. Сортировка Supabase
+      if (sort === 'date_desc')    query = query.order('date_created', { ascending: false });
+      if (sort === 'date_asc')     query = query.order('date_created', { ascending: true });
+      if (sort === 'deadline_asc') query = query.order('deadline', { ascending: true });
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+      setRequests(data || []);
     } catch (e) {
-      // тихо — авто-обновление не должно показывать ошибки
+      console.error('Ошибка загрузки:', e.message);
     }
   };
 
@@ -83,57 +99,42 @@ export default function RequestsListScreen({ navigation, route }) {
     setRefreshing(false);
   };
 
-  const getFiltered = () => {
-    let data = requests;
-
-    // Фильтр по статусу
-    if (filter === 'free') data = data.filter(r => r.status === 'free');
-    else if (filter === 'mine') data = data.filter(r => r.master_id === master?.id);
-    else if (filter === 'done') data = data.filter(r => r.status === 'done');
-
-    // Поиск
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      data = data.filter(r =>
-        (r.number_1c   || '').toLowerCase().includes(q) ||
-        (r.address     || '').toLowerCase().includes(q) ||
-        (r.category    || '').toLowerCase().includes(q) ||
-        (r.content     || '').toLowerCase().includes(q) ||
-        (r.master_name || '').toLowerCase().includes(q)
-      );
-    }
-
-    // Сортировка
-    data = [...data].sort((a, b) => {
-      if (sort === 'date_desc')     return new Date(b.date_received) - new Date(a.date_received);
-      if (sort === 'date_asc')      return new Date(a.date_received) - new Date(b.date_received);
-      if (sort === 'deadline_asc')  return new Date(a.deadline || '9999') - new Date(b.deadline || '9999');
-      if (sort === 'deadline_desc') return new Date(b.deadline || '0') - new Date(a.deadline || '0');
-      return 0;
-    });
-
-    return data;
+  // Фильтрация по строке поиска (в памяти)
+  const getFilteredData = () => {
+    if (!search.trim()) return requests;
+    const q = search.toLowerCase();
+    return requests.filter(r => 
+      (r.num_1c?.toLowerCase().includes(q)) || 
+      (r.address?.toLowerCase().includes(q)) ||
+      (r.content?.toLowerCase().includes(q)) ||
+      (r.contact_name?.toLowerCase().includes(q))
+    );
   };
 
-  const filtered = getFiltered();
+  const filtered = getFilteredData();
 
   const renderItem = ({ item }) => (
     <RequestCard
-      item={item}
+      item={{
+        ...item,
+        // Адаптация под RequestCard, если он ждет старые имена полей
+        number_1c: item.num_1c, 
+        category: item.address, // В карточке обычно выводим адрес как основное
+      }}
       onPress={() => navigation.navigate('RequestDetail', {
-        id: item.id, number: item.number_1c, master,
-      })}
+  number: item.number, // Передаем именно number
+  master: master
+})}
     />
   );
 
   return (
     <View style={s.container}>
-
       {/* Поиск */}
       <View style={s.searchBox}>
         <TextInput
           style={s.searchInput}
-          placeholder="🔍 Поиск по номеру, адресу, категории..."
+          placeholder="🔍 Поиск по номеру или адресу..."
           placeholderTextColor="#64748b"
           value={search}
           onChangeText={setSearch}
@@ -145,7 +146,7 @@ export default function RequestsListScreen({ navigation, route }) {
         )}
       </View>
 
-      {/* Фильтры + Сортировка */}
+      {/* Фильтры и Сортировка */}
       <View style={s.filterBar}>
         <View style={s.filters}>
           {FILTERS.map(f => (
@@ -165,55 +166,40 @@ export default function RequestsListScreen({ navigation, route }) {
         </TouchableOpacity>
       </View>
 
-      {/* Dropdown сортировки */}
+      {/* Выбор сортировки */}
       {showSort && (
         <View style={s.sortDropdown}>
-          {SORTS.map(s => (
+          {SORTS.map(sItem => (
             <TouchableOpacity
-              key={s.key}
-              style={[s.sortItem, sort === s.key && s.sortItemActive]}
-              onPress={() => { setSort(s.key); setShowSort(false); }}
+              key={sItem.key}
+              style={[s.sortItem, sort === sItem.key && s.sortItemActive]}
+              onPress={() => { setSort(sItem.key); setShowSort(false); }}
             >
-              <Text style={[s.sortItemText, sort === s.key && { color: '#f1f5f9' }]}>
-                {s.label}
+              <Text style={[s.sortItemText, sort === sItem.key && { color: '#f1f5f9' }]}>
+                {sItem.label}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
       )}
 
-      {/* Счётчик результатов */}
-      {(search || filter !== 'all') && (
-        <View style={s.resultCount}>
-          <Text style={s.resultCountText}>
-            Найдено: {filtered.length}
-            {search ? ` по запросу "${search}"` : ''}
-          </Text>
-        </View>
-      )}
-
+      {/* Список */}
       <FlatList
         data={filtered}
-        keyExtractor={i => i.id.toString()}
+        keyExtractor={item => item.number}
         renderItem={renderItem}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#3b82f6" />
         }
+        contentContainerStyle={{ paddingBottom: 20 }}
         ListEmptyComponent={
           <View style={s.emptyBox}>
             <Text style={s.emptyText}>
-              {search ? 'Ничего не найдено' : 'Заявок нет'}
+              {search ? 'Ничего не найдено' : 'Заявок в этой категории нет'}
             </Text>
-            {search && (
-              <TouchableOpacity onPress={() => setSearch('')}>
-                <Text style={s.emptyClear}>Очистить поиск</Text>
-              </TouchableOpacity>
-            )}
           </View>
         }
-        contentContainerStyle={{ paddingBottom: 20 }}
       />
-
     </View>
   );
 }
@@ -222,40 +208,34 @@ const s = StyleSheet.create({
   container:       { flex: 1, backgroundColor: '#f1f5f9' },
   searchBox:       {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 6,
+    backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 8,
     borderBottomWidth: 0.5, borderBottomColor: '#e2e8f0',
   },
-  searchInput:     { flex: 1, fontSize: 13, color: '#0f172a', paddingVertical: 6 },
+  searchInput:     { flex: 1, fontSize: 14, color: '#0f172a' },
   searchClear:     { padding: 4 },
   filterBar:       {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#fff', paddingHorizontal: 10, paddingBottom: 8, paddingTop: 4,
+    backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 8,
     borderBottomWidth: 0.5, borderBottomColor: '#e2e8f0',
   },
-  filters:         { flex: 1, flexDirection: 'row', gap: 4 },
-  filterBtn:       { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: '#f1f5f9' },
+  filters:         { flex: 1, flexDirection: 'row', gap: 6 },
+  filterBtn:       { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#f1f5f9' },
   filterActive:    { backgroundColor: '#0f172a' },
-  filterText:      { fontSize: 11, color: '#64748b' },
-  filterTextActive:{ color: '#fff' },
+  filterText:      { fontSize: 12, color: '#64748b' },
+  filterTextActive:{ color: '#fff', fontWeight: '600' },
   sortBtn:         {
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20,
     backgroundColor: '#f1f5f9', borderWidth: 0.5, borderColor: '#e2e8f0',
   },
-  sortBtnText:     { fontSize: 11, color: '#64748b' },
+  sortBtnText:     { fontSize: 12, color: '#64748b' },
   sortDropdown:    {
     backgroundColor: '#fff', borderBottomWidth: 0.5,
     borderBottomColor: '#e2e8f0', flexDirection: 'row',
-    flexWrap: 'wrap', padding: 8, gap: 6,
+    flexWrap: 'wrap', padding: 10, gap: 8,
   },
-  sortItem:        {
-    paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: 20, backgroundColor: '#f1f5f9',
-  },
-  sortItemActive:  { backgroundColor: '#0f172a' },
-  sortItemText:    { fontSize: 11, color: '#64748b' },
-  resultCount:     { paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#eff6ff' },
-  resultCountText: { fontSize: 11, color: '#1d4ed8' },
-  emptyBox:        { alignItems: 'center', marginTop: 60 },
-  emptyText:       { color: '#94a3b8', fontSize: 14, marginBottom: 8 },
-  emptyClear:      { color: '#3b82f6', fontSize: 12 },
+  sortItem:        { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: '#f8fafc' },
+  sortItemActive:  { backgroundColor: '#3b82f6' },
+  sortItemText:    { fontSize: 12, color: '#64748b' },
+  emptyBox:        { alignItems: 'center', marginTop: 100 },
+  emptyText:       { color: '#94a3b8', fontSize: 15 },
 });

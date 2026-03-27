@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_URL } from '../config';
+import { supabase } from '../supabase'; // Одна точка вместо двух
 
 export default function SelectMasterScreen({ navigation }) {
   const [masters,  setMasters]  = useState([]);
@@ -21,25 +22,32 @@ export default function SelectMasterScreen({ navigation }) {
   useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    try {
-      // Проверяем сохранённую сессию
-      const saved = await AsyncStorage.getItem('master');
-      if (saved) {
-        const master = JSON.parse(saved);
-        navigation.replace('RequestsList', { master });
-        return;
-      }
-
-      const res  = await fetch(`${API_URL}/masters`);
-      const data = await res.json();
-      setMasters(data);
-      setFiltered(data);
-    } catch (e) {
-      alert('Ошибка подключения. Проверь интернет.');
-    } finally {
-      setLoading(false);
+  try {
+    // 1. Проверяем сохранённую сессию (оставляем твой код)
+    const saved = await AsyncStorage.getItem('master');
+    if (saved) {
+      const master = JSON.parse(saved);
+      navigation.replace('RequestsList', { master });
+      return;
     }
-  };
+
+    // 2. Запрос к Supabase вместо старого API
+    const { data, error } = await supabase
+      .from('masters')
+      .select('*')
+      .order('full_name', { ascending: true });
+
+    if (error) throw error;
+
+    setMasters(data);
+    setFiltered(data);
+  } catch (e) {
+    Alert.alert('Ошибка', 'Не удалось загрузить список мастеров');
+    console.error(e);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleSearch = (text) => {
     setSearch(text);
@@ -56,38 +64,42 @@ export default function SelectMasterScreen({ navigation }) {
   };
 
   // Нажали цифру PIN
+ // Нажали цифру PIN
   const handlePinPress = (digit) => {
     if (pin.length >= 4) return;
-    const newPin = pin + digit;
-    setPin(newPin);
-    if (newPin.length === 4) verifyPin(newPin);
+    const updatedPin = pin + digit;
+    setPin(updatedPin);
+
+    // Если набрали 4 цифры — запускаем проверку
+    if (updatedPin.length === 4) {
+      validateAndLogin(updatedPin);
+    }
   };
 
   const handlePinDelete = () => setPin(p => p.slice(0, -1));
 
-  const verifyPin = async (enteredPin) => {
+  // Новая чистая функция проверки
+  const validateAndLogin = async (finalPin) => {
     setPinLoading(true);
-    setPinError('');
-    try {
-      const res  = await fetch(`${API_URL}/masters/${pinMaster.id}/verify-pin`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ pin: enteredPin }),
-      });
-      const data = await res.json();
+    setPinError(''); // Сбрасываем старую ошибку
 
-      if (res.ok) {
-        // PIN верный — сохраняем и входим
+    try {
+      // Сравниваем введенный ПИН с паролем из базы Supabase
+      if (finalPin === pinMaster.password) { 
         await AsyncStorage.setItem('master', JSON.stringify(pinMaster));
+        
+        // Закрываем модал и очищаем данные
+        setPin('');
         setPinMaster(null);
+        
+        // Переходим на список заявок
         navigation.replace('RequestsList', { master: pinMaster });
       } else {
-        setPinError(data.error || 'Неверный PIN');
-        setPin('');
+        setPinError('Неверный ПИН-код');
+        setPin(''); // Очищаем точки для повторного ввода
       }
     } catch (e) {
-      setPinError('Ошибка сети');
-      setPin('');
+      Alert.alert('Ошибка', 'Не удалось сохранить сессию');
     } finally {
       setPinLoading(false);
     }

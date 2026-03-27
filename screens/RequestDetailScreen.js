@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import * as FileSystem from 'expo-file-system';
 import {
   View, Text, ScrollView, TouchableOpacity,
   StyleSheet, Alert, Image, ActivityIndicator,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { API_URL } from '../config';
+import { supabase } from '../supabase'; 
 
 export default function RequestDetailScreen({ route, navigation }) {
-  const { id, master } = route.params;
-  const [req, setReq]                     = useState(null);
+  const { number, master } = route.params; 
+  const [req, setReq] = useState(null);
   const [loading, setLoading]             = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [uploadStatus, setUploadStatus]   = useState('');
@@ -16,216 +17,226 @@ export default function RequestDetailScreen({ route, navigation }) {
   useEffect(() => { loadRequest(); }, []);
 
   const loadRequest = async () => {
-    try {
-      const res  = await fetch(`${API_URL}/requests/${id}`);
-      const data = await res.json();
-      setReq(data);
-    } catch (e) {
-      alert('Ошибка загрузки заявки');
-    } finally {
-      setLoading(false);
-    }
-  };
+  try {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('number', number) // Используем number из параметров
+      .single();
+
+    if (error) throw error;
+    setReq(data);
+    
+    // Обновляем заголовок, чтобы не было undefined
+    navigation.setOptions({ title: `Заявка #${data.number}` });
+  } catch (e) {
+    console.error(e);
+    Alert.alert('Ошибка', 'Заявка не найдена');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const doAction = async (action) => {
-    setActionLoading(true);
-    try {
-      const body = action === 'take' ? { master_id: master.id } : {};
-      const res  = await fetch(`${API_URL}/requests/${id}/${action}`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        await loadRequest();
-      } else {
-        Alert.alert('Ошибка', data.error);
-      }
-    } catch (e) {
-      alert('Ошибка запроса');
-    } finally {
-      setActionLoading(false);
+
+    if (actionLoading) return;
+  setActionLoading(true);
+
+  try {
+    let updateData = {};
+    
+    if (action === 'take') {
+      updateData = { 
+        status: 'В работе', 
+        id_master: master.id, // UUID мастера
+        taken_at: new Date().toISOString() // Соответствует полю в SQL
+      };
+    } else if (action === 'done') {
+      updateData = { 
+        status: 'Выполнена',
+        completed_at: new Date().toISOString() // Соответствует полю в SQL
+      };
+    } else if (action === 'return') {
+      updateData = { 
+        status: 'Новая', 
+        id_master: null,
+        taken_at: null,
+        completed_at: null 
+      };
     }
-  };
 
-  const pickAndUploadPhoto = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) { alert('Нужен доступ к галерее'); return; }
+    // Логируем для проверки в консоли
+    console.log('Update number:', number);
+    console.log('Payload:', updateData);
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsMultipleSelection: true,
-      quality: 0.7,
+    const { data, error } = await supabase
+      .from('orders')
+      .update(updateData)
+      .eq('number', number)
+      .select();
+
+    if (error) throw error;
+
+    if (!data || data.length === 0) {
+      throw new Error('Заявка не найдена в базе');
+    }
+
+    await loadRequest();
+
+  } catch (e) {
+    console.error('Full Error:', e);
+    Alert.alert('Ошибка', `Не удалось обновить: ${e.message}`);
+  } finally {
+    setActionLoading(false);
+  }
+};
+
+      const uploadPhoto = async () => {
+  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!perm.granted) { alert('Нужен доступ к галерее'); return; }
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    quality: 0.6,
+  });
+
+  if (result.canceled) return;
+
+  setActionLoading(true);
+  setUploadStatus('Загрузка фото...');
+
+  try {
+    const asset = result.assets[0];
+    const ext = asset.uri.split('.').pop();
+    
+    // --- 1. Безопасное имя папки ---
+    const safeFolderName = String(number).replace(/[^a-zA-Z0-9-_]/g, '_');
+    const fileName = `${safeFolderName}/${Date.now()}.${ext}`;
+
+    // --- 2. Чтение файла (исправлено: используем строку 'base64') ---
+    // Используем FileSystem для чтения файла
+    const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+      encoding: 'base64', // Используем строку напрямую, а не FileSystem.EncodingType.Base64
     });
 
-    if (result.canceled) return;
+    // --- 3. Преобразование Base64 в ArrayBuffer (бинарные данные) ---
+    // Это нужно, чтобы файл не был 0кб
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const arrayBuffer = byteArray.buffer;
 
-    setActionLoading(true);
-    setUploadStatus('Загружаем фото...');
-
-    try {
-      const formData = new FormData();
-      result.assets.forEach((asset, i) => {
-        const ext = asset.uri.split('.').pop() || 'jpg';
-        formData.append('photos', {
-          uri:  asset.uri,
-          name: `photo_${Date.now()}_${i}.${ext}`,
-          type: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
-        });
+    // --- 4. Загрузка в Supabase ---
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('photos')
+      .upload(fileName, arrayBuffer, {
+        contentType: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+        upsert: false
       });
 
-      const res = await fetch(`${API_URL}/requests/${id}/photos`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'multipart/form-data' },
-        body:    formData,
-      });
+    if (uploadError) throw uploadError;
 
-      const data = await res.json();
+    // --- 5. Обновление ссылки в БД ---
+    const { data: urlData } = supabase.storage
+      .from('photos')
+      .getPublicUrl(fileName);
 
-      if (res.ok) {
-        setUploadStatus('');
-        await loadRequest();
-      } else {
-        setUploadStatus('');
-        Alert.alert('Ошибка загрузки', data.error || 'Неизвестная ошибка');
-      }
-    } catch (e) {
-      setUploadStatus('');
-      Alert.alert('Ошибка', 'Не удалось загрузить фото: ' + e.message);
-    } finally {
-      setActionLoading(false);
+    const newPhotos = [...(req.photos || []), urlData.publicUrl];
+
+    const { error: updateError } = await supabase
+      .from('orders')
+      .update({ photos: newPhotos })
+      .eq('number', number);
+
+    if (updateError) throw updateError;
+
+    await loadRequest();
+    Alert.alert('Успешно', 'Фотография добавлена');
+    
+  } catch (e) {
+    console.error('Ошибка загрузки фото:', e);
+    Alert.alert('Ошибка', `Не удалось сохранить фото: ${e.message || 'неизвестная ошибка'}`);
+  } finally {
+    setUploadStatus('');
+    setActionLoading(false);
+  }
+};
+
+  const fmtDate = (d) => d ? new Date(d).toLocaleString('ru-RU') : '—';
+
+  if (loading) return (
+    <View style={s.center}><ActivityIndicator size="large" color="#3b82f6" /></View>
+  );
+
+  const isMine = req?.id_master === master?.id;
+
+  // Маппинг статусов под твою базу
+  const getStatusInfo = (status) => {
+    switch(status) {
+      case 'Новая': return { bg: '#f0fdf4', dot: '#4ade80', text: 'Свободна' };
+      case 'В работе': return { bg: '#fefce8', dot: '#fbbf24', text: `В работе` };
+      case 'Выполнена': return { bg: '#f1f5f9', dot: '#64748b', text: 'Выполнена' };
+      default: return { bg: '#fff', dot: '#ccc', text: status };
     }
   };
 
-  const fmtDate  = (d) => d ? new Date(d).toLocaleString('ru-RU')     : '—';
-  const fmtShort = (d) => d ? new Date(d).toLocaleDateString('ru-RU') : '—';
+  const sInfo = getStatusInfo(req.status);
 
-  if (loading) {
-    return (
-      <View style={s.center}>
-        <ActivityIndicator size="large" color="#3b82f6" />
-      </View>
-    );
-  }
-
-  if (!req) {
-    return (
-      <View style={s.center}>
-        <Text style={{ color: '#64748b' }}>Заявка не найдена</Text>
-      </View>
-    );
-  }
-
-  const isMine = req.master_id === master?.id;
-
-  const statusBg   = { free: '#f0fdf4', taken: '#fefce8', done: '#f0fdf4' };
-  const statusDot  = { free: '#4ade80', taken: '#fbbf24', done: '#4ade80' };
-  const statusText = {
-    free:  'Свободна — мастер не назначен',
-    taken: `В работе у ${req.master_name || '...'}`,
-    done:  `Выполнено · ${req.master_name}`,
-  };
-
-  const fields = [
-    ['Категория',        req.category],
-    ['Адрес',            req.address],
-    ['Филиал',           req.branch],
-    ['Контактное лицо',  req.contact_person],
-    ['Диспетчер',        req.dispatcher],
-    ['Дата поступления', fmtDate(req.date_received)],
-    ['Срок выполнения',  fmtShort(req.deadline)],
-  ];
+  // ... (предыдущий код)
 
   return (
     <ScrollView style={s.container}>
-
-      {/* Статус */}
-      <View style={[s.statusBar, { backgroundColor: statusBg[req.status] }]}>
-        <View style={[s.statusDot, { backgroundColor: statusDot[req.status] }]} />
-        <Text style={s.statusText}>{statusText[req.status]}</Text>
+      <View style={[s.statusBar, { backgroundColor: sInfo.bg }]}>
+        <View style={[s.statusDot, { backgroundColor: sInfo.dot }]} />
+        <Text style={s.statusText}>{sInfo.text}</Text>
       </View>
 
-      {/* Поля */}
-      {fields.map(([label, val]) => (
-        <View key={label} style={s.field}>
-          <Text style={s.fieldLabel}>{label}</Text>
-          <Text style={s.fieldVal}>{val || '—'}</Text>
-        </View>
-      ))}
+      <View style={s.field}><Text style={s.fieldLabel}>Адрес</Text><Text style={s.fieldVal}>{req.address}</Text></View>
+      <View style={s.field}><Text style={s.fieldLabel}>Контакт</Text><Text style={s.fieldVal}>{req.contact_name} {req.contact_phone ? `(${req.contact_phone})` : ''}</Text></View>
+      <View style={s.field}><Text style={s.fieldLabel}>Создана</Text><Text style={s.fieldVal}>{fmtDate(req.date_created)}</Text></View>
+      <View style={s.field}><Text style={s.fieldLabel}>Срок</Text><Text style={s.fieldVal}>{fmtDate(req.deadline)}</Text></View>
 
-      {/* Содержание */}
       <View style={s.descBox}>
+        <Text style={s.fieldLabel}>Содержание работ</Text>
         <Text style={s.descText}>{req.content}</Text>
       </View>
 
-      {/* Исполнитель */}
-      {req.status !== 'free' && (
-        <View style={[s.workerBox, req.status === 'done' && s.workerBoxDone]}>
+      {/* Информация об исполнителе и времени */}
+      {req.status !== 'Новая' && (
+        <View style={[s.workerBox, req.status === 'Выполнена' && s.workerBoxDone]}>
           <Text style={s.workerLabel}>Исполнитель</Text>
-          <Text style={s.workerName}>{req.master_name}</Text>
+          {/* Если в объекте req нет имени мастера, берем из текущего master */}
+          <Text style={s.workerName}>{req.master_name || master.full_name}</Text>
+          
           {req.taken_at && (
-            <Text style={s.workerMeta}>Взято: {fmtDate(req.taken_at)}</Text>
+            <Text style={s.workerMeta}>Взято в работу: {fmtDate(req.taken_at)}</Text>
           )}
-          {req.done_at && (
-            <Text style={s.workerMeta}>Выполнено: {fmtDate(req.done_at)}</Text>
+          {req.completed_at && (
+            <Text style={s.workerMeta}>Завершено: {fmtDate(req.completed_at)}</Text>
           )}
         </View>
       )}
 
-      {/* Фотоотчёт */}
-      {req.status !== 'free' && (
+      {req.photos && req.photos.length > 0 && (
         <View style={s.photoSection}>
           <Text style={s.photoLabel}>Фотоотчёт</Text>
-
-          {/* Статус загрузки */}
-          {uploadStatus ? (
-            <View style={s.uploadStatus}>
-              <ActivityIndicator size="small" color="#3b82f6" />
-              <Text style={s.uploadStatusText}>{uploadStatus}</Text>
-            </View>
-          ) : null}
-
           <View style={s.photoRow}>
-            {req.photos && req.photos.map(p => {
-              // Используем url из Cloudinary если есть, иначе старый путь
-              const photoUrl = p.url || `${API_URL.replace('/api', '')}/uploads/${p.filename}`;
-              return (
-                <Image
-                  key={p.id}
-                  source={{ uri: photoUrl }}
-                  style={s.photoThumb}
-                  onError={() => console.log('Ошибка загрузки фото:', photoUrl)}
-                />
-              );
-            })}
-
-            {isMine && req.status === 'taken' && (
-              <TouchableOpacity
-                style={[s.photoAdd, actionLoading && { opacity: 0.5 }]}
-                onPress={pickAndUploadPhoto}
-                disabled={actionLoading}
-              >
-                <Text style={s.photoAddText}>+</Text>
-              </TouchableOpacity>
-            )}
+            {req.photos.map((url, index) => (
+              <Image key={index} source={{ uri: url }} style={s.photoThumb} />
+            ))}
           </View>
         </View>
       )}
 
-      {/* Кнопки */}
       <View style={s.actions}>
-
-        {req.status === 'free' && (
-          <TouchableOpacity
-            style={[s.btnMain, actionLoading && { opacity: 0.6 }]}
+        {req.status === 'Новая' && (
+          <TouchableOpacity 
+            style={[s.btnMain, actionLoading && { opacity: 0.6 }]} 
+            onPress={() => doAction('take')} 
             disabled={actionLoading}
-            onPress={() =>
-              Alert.alert('Взять заявку?', req.content, [
-                { text: 'Отмена' },
-                { text: 'Взять', onPress: () => doAction('take') },
-              ])
-            }
           >
             <Text style={s.btnMainText}>
               {actionLoading ? 'Загрузка...' : 'Принять в работу'}
@@ -233,111 +244,60 @@ export default function RequestDetailScreen({ route, navigation }) {
           </TouchableOpacity>
         )}
 
-        {isMine && req.status === 'taken' && (
+        {isMine && req.status === 'В работе' && (
           <>
-            <TouchableOpacity
-              style={[s.btnSuccess, actionLoading && { opacity: 0.6 }]}
+            <TouchableOpacity 
+              style={[s.photoAddFull, actionLoading && { opacity: 0.6 }]} 
+              onPress={uploadPhoto} 
               disabled={actionLoading}
-              onPress={() =>
-                Alert.alert('Выполнено?', 'Отметить заявку выполненной?', [
-                  { text: 'Отмена' },
-                  { text: 'Да, выполнено', onPress: () => doAction('done') },
-                ])
-              }
+            >
+              <Text style={{color: '#3b82f6'}}>+ Добавить фото</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[s.btnSuccess, actionLoading && { opacity: 0.6 }]} 
+              onPress={() => doAction('done')} 
+              disabled={actionLoading}
             >
               <Text style={s.btnSuccessText}>Отметить выполненным</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[s.btnOutline, actionLoading && { opacity: 0.6 }]}
+            <TouchableOpacity 
+              style={[s.btnOutline, actionLoading && { opacity: 0.6 }]} 
+              onPress={() => doAction('return')} 
               disabled={actionLoading}
-              onPress={() =>
-                Alert.alert('Вернуть?', 'Вернуть заявку в общий список?', [
-                  { text: 'Отмена' },
-                  { text: 'Вернуть', style: 'destructive', onPress: () => doAction('return') },
-                ])
-              }
             >
-              <Text style={s.btnOutlineText}>Вернуть в буфер</Text>
+              <Text style={s.btnOutlineText}>Вернуть в общий список</Text>
             </TouchableOpacity>
           </>
         )}
       </View>
-
       <View style={{ height: 40 }} />
     </ScrollView>
   );
 }
 
 const s = StyleSheet.create({
-  container:       { flex: 1, backgroundColor: '#f1f5f9' },
-  center:          { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  statusBar:       {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    padding: 10, paddingHorizontal: 16,
-    borderBottomWidth: 0.5, borderBottomColor: '#e2e8f0',
-  },
-  statusDot:       { width: 8, height: 8, borderRadius: 4 },
-  statusText:      { fontSize: 12, fontWeight: '500', color: '#374151' },
-  field:           {
-    backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 10,
-    borderBottomWidth: 0.5, borderBottomColor: '#f1f5f9',
-  },
-  fieldLabel:      {
-    fontSize: 9, color: '#94a3b8',
-    textTransform: 'uppercase', letterSpacing: 0.5,
-  },
-  fieldVal:        { fontSize: 13, color: '#0f172a', fontWeight: '500', marginTop: 2 },
-  descBox:         {
-    margin: 12, backgroundColor: '#fff', borderRadius: 10, padding: 14,
-    borderWidth: 0.5, borderColor: '#e2e8f0',
-  },
-  descText:        { fontSize: 13, color: '#374151', lineHeight: 20 },
-  workerBox:       {
-    margin: 12, marginTop: 0, backgroundColor: '#fefce8',
-    borderRadius: 10, padding: 12,
-    borderWidth: 0.5, borderColor: '#fde68a',
-  },
-  workerBoxDone:   { backgroundColor: '#f0fdf4', borderColor: '#bbf7d0' },
-  workerLabel:     {
-    fontSize: 9, color: '#92400e',
-    textTransform: 'uppercase', letterSpacing: 0.5,
-  },
-  workerName:      { fontSize: 14, fontWeight: '700', color: '#0f172a', marginTop: 3 },
-  workerMeta:      { fontSize: 11, color: '#64748b', marginTop: 2 },
-  photoSection:    { marginHorizontal: 12, marginBottom: 8 },
-  photoLabel:      {
-    fontSize: 9, color: '#94a3b8',
-    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6,
-  },
-  uploadStatus:    {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    marginBottom: 8, padding: 8, backgroundColor: '#eff6ff',
-    borderRadius: 8,
-  },
-  uploadStatusText:{ fontSize: 11, color: '#1d4ed8' },
-  photoRow:        { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  photoThumb:      { width: 80, height: 80, borderRadius: 8, backgroundColor: '#e2e8f0' },
-  photoAdd:        {
-    width: 80, height: 80, borderRadius: 8,
-    borderWidth: 1.5, borderColor: '#cbd5e1', borderStyle: 'dashed',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  photoAddText:    { fontSize: 28, color: '#94a3b8' },
-  actions:         { margin: 12, gap: 8 },
-  btnMain:         {
-    backgroundColor: '#0f172a', borderRadius: 12,
-    padding: 15, alignItems: 'center',
-  },
-  btnMainText:     { color: '#fff', fontSize: 15, fontWeight: '700' },
-  btnSuccess:      {
-    backgroundColor: '#15803d', borderRadius: 12,
-    padding: 15, alignItems: 'center',
-  },
-  btnSuccessText:  { color: '#fff', fontSize: 15, fontWeight: '700' },
-  btnOutline:      {
-    borderRadius: 12, padding: 13, alignItems: 'center',
-    borderWidth: 1, borderColor: '#ef4444',
-  },
-  btnOutlineText:  { color: '#ef4444', fontSize: 13, fontWeight: '600' },
+  container: { flex: 1, backgroundColor: '#f1f5f9' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  statusBar: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderBottomWidth: 0.5, borderBottomColor: '#e2e8f0' },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  statusText: { fontSize: 13, fontWeight: '600' },
+  field: { backgroundColor: '#fff', padding: 12, borderBottomWidth: 0.5, borderBottomColor: '#f1f5f9' },
+  fieldLabel: { fontSize: 10, color: '#94a3b8', textTransform: 'uppercase' },
+  fieldVal: { fontSize: 14, color: '#0f172a', marginTop: 2 },
+  descBox: { margin: 12, backgroundColor: '#fff', borderRadius: 10, padding: 12, borderWidth: 0.5, borderColor: '#e2e8f0' },
+  descText: { fontSize: 14, color: '#374151', lineHeight: 20, marginTop: 4 },
+  photoSection: { paddingHorizontal: 12 },
+  photoLabel: { fontSize: 10, color: '#94a3b8', textTransform: 'uppercase', marginBottom: 8 },
+  photoRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  photoThumb: { width: 100, height: 100, borderRadius: 8 },
+  photoAddFull: { padding: 15, alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: '#3b82f6', borderStyle: 'dashed' },
+  actions: { padding: 12, gap: 10 },
+  btnMain: { backgroundColor: '#0f172a', borderRadius: 12, padding: 16, alignItems: 'center' },
+  btnMainText: { color: '#fff', fontWeight: '700' },
+  btnSuccess: { backgroundColor: '#15803d', borderRadius: 12, padding: 16, alignItems: 'center' },
+  btnSuccessText: { color: '#fff', fontWeight: '700' },
+  btnOutline: { padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#ef4444', borderRadius: 12 },
+  btnOutlineText: { color: '#ef4444', fontWeight: '600' },
 });
