@@ -6,10 +6,12 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "development"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "preview"
     },
     "preview-ios": {
       "ios": {
@@ -17,7 +19,8 @@
         "enterpriseProvisioning": "adhoc",
         "credentialsSource": "local"
       },
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "preview-ios"
     },
     "sideload": {
       "ios": {
@@ -27,10 +30,12 @@
       "android": {
         "buildType": "apk"
       },
-      "distribution": "internal"
+      "distribution": "internal",
+      "channel": "sideload"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "channel": "production"
     }
   },
   "submit": {
